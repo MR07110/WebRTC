@@ -22,13 +22,6 @@ const ADMIN_PASS = "7777";
 // ============================================================
 let userPeer       = null;   // User (qurilma) tomoni uchun Peer
 let adminPeer      = null;   // Admin tomoni uchun Peer
-let localStream    = null;   // User kamerasi + mikrofon
-let currentCall    = null;   // Joriy WebRTC call (video)
-let talkCall       = null;   // Admin->User ovoz call
-let talkStream     = null;   // Admin mikrofon stream
-let isTalking      = false;
-let isFlashlightOn = false;
-
 let currentTargetId   = null; // Admin ulangan qurilma ID
 let activeDbListeners = [];   // Barcha Firebase listenerlarni kuzatish uchun
 
@@ -39,66 +32,6 @@ let alarmOscillator  = null;
 let alarmGain        = null;
 let alarmInterval    = null;
 let audioCtx         = null;
-
-// ============================================================
-// LOG TIZIMI
-// ============================================================
-
-/**
- * User qurilmasidan Firebase ga log yuboradi.
- * @param {string} message
- * @param {'info'|'warn'|'error'} level
- */
-function sendLog(message, level = 'info') {
-    const id = (userPeer && userPeer.id) ? userPeer.id : 'no-peer-id';
-    const entry = {
-        time:    new Date().toLocaleTimeString('uz-UZ'),
-        message: String(message),
-        level:   level
-    };
-    db.ref('devices/' + id + '/logs').push(entry).catch(err => {
-        console.error('[SecureRTC] Firebase log write failed:', err);
-    });
-}
-
-/**
- * Admin paneldagi log konteyneriga yozadi.
- * @param {string} time
- * @param {string} message
- * @param {'info'|'warn'|'error'} level
- */
-function appendLog(time, message, level) {
-    const container = document.getElementById('console-logs');
-    if (!container) return;
-
-    const empty = container.querySelector('.log-empty');
-    if (empty) empty.remove();
-
-    const div = document.createElement('div');
-    div.className = 'log-entry ' + (level || 'info');
-    div.textContent = '[' + time + '] ' + message;
-    container.prepend(div);
-
-    // Juda ko'p log bo'lsa eskisini o'chirish
-    while (container.children.length > 200) {
-        container.removeChild(container.lastChild);
-    }
-}
-
-function clearLogs() {
-    const container = document.getElementById('console-logs');
-    if (container) {
-        container.innerHTML = '<div class="log-empty">Loglar tozalandi</div>';
-    }
-}
-
-// Brauzer xatolarini ushlash va Firebase ga yuborish
-window.onerror = function(message, source, lineno) {
-    if (userPeer && userPeer.id) {
-        sendLog('JS xatosi: ' + message + ' | Qator: ' + lineno, 'error');
-    }
-    return false;
-};
 
 // ============================================================
 // SAHIFA YUKLANGANDA AVTOMATIK TIK LASH
@@ -126,18 +59,6 @@ function showScreen(id) {
 }
 
 function goHome() {
-    // Barcha media va ulanishlarni to'xtatish
-    if (localStream) {
-        localStream.getTracks().forEach(t => t.stop());
-        localStream = null;
-    }
-    if (talkStream) {
-        talkStream.getTracks().forEach(t => t.stop());
-        talkStream = null;
-    }
-    stopAlarm();
-    if (currentCall) { try { currentCall.close(); } catch(e){} currentCall = null; }
-    if (talkCall)    { try { talkCall.close(); }    catch(e){} talkCall = null; }
     if (userPeer)    { try { userPeer.destroy(); }  catch(e){} userPeer = null; }
     if (adminPeer)   { try { adminPeer.destroy(); } catch(e){} adminPeer = null; }
     if (audioCtx)    { try { audioCtx.close(); }   catch(e){} audioCtx = null; }
@@ -201,8 +122,6 @@ async function startUserMode(deviceName) {
     userPeer = new Peer();
 
     userPeer.on('open', function(id) {
-        sendLog('PeerJS ulandi. ID: ' + id, 'info');
-
         // Qurilmani Firebase ga ro'yxatdan o'tkazish
         const deviceRef = db.ref('devices/' + id);
         deviceRef.set({
@@ -232,103 +151,19 @@ async function startUserMode(deviceName) {
         startBatteryMonitoring(id);
 
         // Firebase buyruqlarini tinglash
-        listenFlashlight(id);
         listenAlarm(id);
 
         // GPS
         startGPS(id);
-
-        sendLog('Qurilma tayyor. Kamera va mikrofon ochilmoqda.', 'info');
     });
 
     userPeer.on('error', function(err) {
-        sendLog('PeerJS xatosi: ' + err.type + ' - ' + (err.message || ''), 'error');
         setUserStatus('Ulanish xatosi', 'error', 'error');
     });
 
     userPeer.on('disconnected', function() {
-        sendLog('PeerJS uzildi. Qayta ulanmoqda...', 'warn');
         userPeer.reconnect();
     });
-
-    // Kamerani va mikrofonni ochish
-    await openCamera();
-
-    // Incoming calllarni qabul qilish (admin video so'raganida)
-    userPeer.on('call', function(call) {
-        sendLog('Admin qo\'ng\'iroq qilmoqda, javob berilmoqda.', 'info');
-
-        if (!localStream) {
-            sendLog('localStream mavjud emas, qo\'ng\'iroqqa javob berib bo\'lmadi.', 'error');
-            call.close();
-            return;
-        }
-
-        call.answer(localStream);
-        currentCall = call;
-
-        call.on('stream', function(remoteStream) {
-            // Admin ovozini qurilmada chiqarish
-            sendLog('Admin ovoz stream qabul qilindi.', 'info');
-            playRemoteAudio(remoteStream);
-        });
-
-        call.on('close', function() {
-            sendLog('Admin qo\'ng\'iroqni tugatdi.', 'info');
-            currentCall = null;
-        });
-
-        call.on('error', function(err) {
-            sendLog('Call xatosi: ' + (err.message || err), 'error');
-        });
-    });
-}
-
-/**
- * Qurilmada audio stream chiqarish.
- * autoplay bloklansa foydalanuvchi bosishini kutadi.
- */
-function playRemoteAudio(stream) {
-    const audio = document.createElement('audio');
-    audio.srcObject = stream;
-    audio.volume = 1.0;
-    audio.play().catch(function() {
-        sendLog('Avtomatik audio bloklandi. Foydalanuvchi bosishi kutilmoqda.', 'warn');
-        const unlock = function() {
-            audio.play().catch(function(e) {
-                sendLog('Audio qayta urinish: ' + e.message, 'warn');
-            });
-            document.removeEventListener('click', unlock);
-            document.removeEventListener('touchstart', unlock);
-        };
-        document.addEventListener('click', unlock);
-        document.addEventListener('touchstart', unlock);
-    });
-}
-
-async function openCamera() {
-    const constraints = [
-        { video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } }, audio: true },
-        { video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } }, audio: true },
-        { video: true, audio: true }
-    ];
-
-    for (const c of constraints) {
-        try {
-            localStream = await navigator.mediaDevices.getUserMedia(c);
-            sendLog('Kamera ochildi: ' + JSON.stringify(c.video), 'info');
-            document.getElementById('u-camera').textContent = 'Faol';
-            document.getElementById('u-camera').className  = 'info-val ok';
-            return;
-        } catch (e) {
-            sendLog('Kamera ochishda xatolik (' + (e.name || e.message) + '), keyingi sozlamani sinab ko\'rilmoqda.', 'warn');
-        }
-    }
-
-    sendLog('Kamera yoki mikrofon ruxsati berilmadi. Hamma usullar muvaffaqiyatsiz.', 'error');
-    document.getElementById('u-camera').textContent = 'Ruxsat yo\'q';
-    document.getElementById('u-camera').className  = 'info-val error';
-    alert('Kamera yoki mikrofon ruxsati berilmadi. Iltimos, brauzer sozlamalarini tekshiring.');
 }
 
 function startBatteryMonitoring(peerId) {
@@ -353,14 +188,11 @@ function startBatteryMonitoring(peerId) {
         updateBattery();
         battery.addEventListener('levelchange', updateBattery);
         battery.addEventListener('chargingchange', updateBattery);
-    }).catch(function(e) {
-        sendLog('Batareya API xatosi: ' + e.message, 'warn');
-    });
+    }).catch(function(e) {});
 }
 
 function startGPS(peerId) {
     if (!navigator.geolocation) {
-        sendLog('Geolokatsiya bu brauzerda qo\'llab-quvvatlanmaydi.', 'warn');
         document.getElementById('u-gps').textContent = 'Qo\'llab-quvvatlanmaydi';
         document.getElementById('u-gps').className  = 'info-val error';
         return;
@@ -379,52 +211,11 @@ function startGPS(peerId) {
             document.getElementById('u-gps').className  = 'info-val ok';
         },
         function(err) {
-            sendLog('GPS xatosi: ' + err.message, 'warn');
             document.getElementById('u-gps').textContent = 'Xatolik: ' + err.message;
             document.getElementById('u-gps').className  = 'info-val error';
         },
         { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
-}
-
-function listenFlashlight(peerId) {
-    const ref = db.ref('devices/' + peerId + '/commands/flashlight');
-    trackListener(ref, 'value', async function(snap) {
-        const val = snap.val();
-        if (val === null) return;
-
-        sendLog('Fonar buyrug\'i qabul qilindi: ' + val, 'info');
-
-        if (!localStream) {
-            sendLog('localStream yo\'q, fonar ishlatib bo\'lmaydi.', 'error');
-            ref.set(false);
-            return;
-        }
-
-        const track = localStream.getVideoTracks()[0];
-        if (!track) {
-            sendLog('Video trek topilmadi.', 'error');
-            ref.set(false);
-            return;
-        }
-
-        const capabilities = typeof track.getCapabilities === 'function' ? track.getCapabilities() : {};
-
-        if (!capabilities.torch) {
-            sendLog('Bu qurilmada fonar (torch) qo\'llab-quvvatlanmaydi.', 'warn');
-            ref.set(false);
-            return;
-        }
-
-        try {
-            await track.applyConstraints({ advanced: [{ torch: !!val }] });
-            isFlashlightOn = !!val;
-            sendLog('Fonar ' + (val ? 'yoqildi' : 'o\'chirildi') + '.', 'info');
-        } catch (e) {
-            sendLog('Fonar applyConstraints xatosi: ' + e.message, 'error');
-            ref.set(false);
-        }
-    });
 }
 
 function listenAlarm(peerId) {
@@ -531,21 +322,14 @@ function connectToDevice(id, name) {
     if (currentTargetId) {
         db.ref('devices/' + currentTargetId + '/info').off();
         db.ref('devices/' + currentTargetId + '/location').off();
-        db.ref('devices/' + currentTargetId + '/logs').off();
-    }
-
-    // Avvalgi callni yopish
-    if (currentCall) {
-        try { currentCall.close(); } catch(e){}
-        currentCall = null;
     }
 
     currentTargetId = id;
 
     // UI
     document.getElementById('target-name').textContent  = name;
-    document.getElementById('connection-status').textContent  = 'Ulanmoqda...';
-    document.getElementById('connection-status').className    = 'conn-badge disconnected';
+    document.getElementById('connection-status').textContent  = 'Ulandi';
+    document.getElementById('connection-status').className    = 'conn-badge connected';
 
     // Tanlangan qurilma tugmasini belgilash
     document.querySelectorAll('.device-btn').forEach(function(b) {
@@ -561,14 +345,6 @@ function connectToDevice(id, name) {
         document.getElementById('battery-display').textContent = 'Batareya: ' + batt + charge;
     });
 
-    // Loglar
-    const logBox = document.getElementById('console-logs');
-    logBox.innerHTML = '';
-    db.ref('devices/' + id + '/logs').limitToLast(80).on('child_added', function(snap) {
-        const entry = snap.val();
-        if (entry) appendLog(entry.time || '?', entry.message || '', entry.level || 'info');
-    });
-
     // GPS
     db.ref('devices/' + id + '/location').on('value', function(snap) {
         const loc = snap.val();
@@ -578,168 +354,11 @@ function connectToDevice(id, name) {
             loc.lat.toFixed(6) + ', ' + loc.lng.toFixed(6) +
             (loc.accuracy ? ' (+/-' + loc.accuracy + 'm)' : '');
     });
-
-    // Video call: admin o'z mikrofon streamini yuboradi, qurilmadan video keladi.
-    // Bo'sh MediaStream yuborilsa PeerJS xatolik beradi,
-    // shuning uchun faqat bitta silent audio track yuboramiz.
-    startVideoCall(id);
-}
-
-async function startVideoCall(targetId) {
-    if (!adminPeer || !adminPeer.id) {
-        appendLog(now(), 'adminPeer tayyor emas. Bir oz kutib qayta urinib ko\'ring.', 'warn');
-        return;
-    }
-
-    try {
-        // Admin tomonidan bitta silent audio track (qurilma ovozni eshitishi uchun emas,
-        // PeerJS ga stream kerak bo'lgani uchun). Asosiy audio talkBtn orqali yuboriladi.
-        const silentStream = createSilentStream();
-
-        currentCall = adminPeer.call(targetId, silentStream);
-
-        currentCall.on('stream', function(remoteStream) {
-            const video = document.getElementById('remoteVideo');
-            const placeholder = document.getElementById('video-placeholder');
-            if (video) {
-                video.srcObject = remoteStream;
-                video.play().catch(function() {});
-            }
-            if (placeholder) placeholder.classList.add('hidden');
-
-            const camBadge = document.getElementById('cam-badge');
-            if (camBadge) { camBadge.textContent = 'LIVE'; camBadge.className = 'cam-badge live'; }
-
-            document.getElementById('connection-status').textContent = 'Ulandi';
-            document.getElementById('connection-status').className   = 'conn-badge connected';
-
-            appendLog(now(), 'Video stream qabul qilindi.', 'info');
-        });
-
-        currentCall.on('close', function() {
-            const placeholder = document.getElementById('video-placeholder');
-            if (placeholder) placeholder.classList.remove('hidden');
-
-            const camBadge = document.getElementById('cam-badge');
-            if (camBadge) { camBadge.textContent = 'OFFLINE'; camBadge.className = 'cam-badge'; }
-
-            document.getElementById('connection-status').textContent = 'Uzildi';
-            document.getElementById('connection-status').className   = 'conn-badge disconnected';
-
-            appendLog(now(), 'Video call uzildi.', 'warn');
-        });
-
-        currentCall.on('error', function(err) {
-            appendLog(now(), 'Video call xatosi: ' + (err.message || err), 'error');
-        });
-
-        appendLog(now(), 'Qurilmaga video call yuborildi: ' + targetId.substring(0, 12) + '...', 'info');
-
-    } catch (e) {
-        appendLog(now(), 'Video call boshlashda xatolik: ' + e.message, 'error');
-    }
-}
-
-/**
- * PeerJS uchun bitta silent audio track bo'lgan MediaStream qaytaradi.
- * Bu bo'sh MediaStream emas — PeerJS uchun hech bo'lmasa bitta track kerak.
- */
-function createSilentStream() {
-    ensureAudioContext();
-    const destination = audioCtx.createMediaStreamDestination();
-    const oscillator  = audioCtx.createOscillator();
-    const gain        = audioCtx.createGain();
-    gain.gain.value   = 0; // Ovoz yo'q (silent)
-    oscillator.connect(gain);
-    gain.connect(destination);
-    oscillator.start();
-    return destination.stream;
 }
 
 // ============================================================
 // ADMIN BOSHQARUV FUNKSIYALARI
 // ============================================================
-
-function toggleFlashlight() {
-    if (!currentTargetId) { alert('Avval qurilmani tanlang.'); return; }
-
-    isFlashlightOn = !isFlashlightOn;
-    db.ref('devices/' + currentTargetId + '/commands/flashlight').set(isFlashlightOn);
-
-    const btn = document.getElementById('flashBtn');
-    if (btn) {
-        const span = btn.querySelector('span');
-        if (span) span.textContent = isFlashlightOn ? 'Fonar o\'chirish' : 'Fonar yoqish';
-        btn.classList.toggle('active', isFlashlightOn);
-    }
-    appendLog(now(), 'Fonar buyrug\'i yuborildi: ' + isFlashlightOn, 'info');
-}
-
-async function toggleTalk() {
-    if (!currentTargetId) { alert('Avval qurilmani tanlang.'); return; }
-    if (!adminPeer || !adminPeer.id) { alert('Admin peer tayyor emas.'); return; }
-
-    const btn = document.getElementById('talkBtn');
-
-    if (!isTalking) {
-        try {
-            talkStream = await navigator.mediaDevices.getUserMedia({
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    autoGainControl:  true
-                }
-            });
-
-            // Avvalgi talk callni yopish
-            if (talkCall) { try { talkCall.close(); } catch(e){} }
-
-            talkCall  = adminPeer.call(currentTargetId, talkStream);
-            isTalking = true;
-
-            talkCall.on('error', function(err) {
-                appendLog(now(), 'Ovoz call xatosi: ' + (err.message || err), 'error');
-            });
-
-            talkCall.on('close', function() {
-                isTalking = false;
-                if (btn) {
-                    const span = btn.querySelector('span');
-                    if (span) span.textContent = 'Gapirish';
-                    btn.classList.remove('active');
-                }
-                appendLog(now(), 'Ovoz call tugadi.', 'info');
-            });
-
-            if (btn) {
-                const span = btn.querySelector('span');
-                if (span) span.textContent = 'Gapirilmoqda (to\'xtatish)';
-                btn.classList.add('active');
-            }
-            appendLog(now(), 'Ovoz uzatish boshlandi.', 'info');
-
-        } catch (e) {
-            alert('Mikrofon ruxsati berilmadi: ' + e.message);
-        }
-    } else {
-        if (talkStream) {
-            talkStream.getTracks().forEach(function(t) { t.stop(); });
-            talkStream = null;
-        }
-        if (talkCall) {
-            try { talkCall.close(); } catch(e){}
-            talkCall = null;
-        }
-        isTalking = false;
-
-        if (btn) {
-            const span = btn.querySelector('span');
-            if (span) span.textContent = 'Gapirish';
-            btn.classList.remove('active');
-        }
-        appendLog(now(), 'Ovoz uzatish to\'xtatildi.', 'info');
-    }
-}
 
 function triggerAlarm() {
     if (!currentTargetId) { alert('Avval qurilmani tanlang.'); return; }
@@ -755,15 +374,12 @@ function triggerAlarm() {
         type:   type.trim(),
         volume: vol
     });
-
-    appendLog(now(), 'Sirena buyrug\'i yuborildi: ' + type + ', ovoz: ' + vol, 'info');
 }
 
 function stopAlarmRemote() {
     if (!currentTargetId) { alert('Avval qurilmani tanlang.'); return; }
 
     db.ref('devices/' + currentTargetId + '/commands/alarm').set({ active: false });
-    appendLog(now(), 'Sirenani to\'xtatish buyrug\'i yuborildi.', 'info');
 }
 
 // ============================================================
@@ -801,11 +417,7 @@ function playAlarm(type, volume) {
         alarmOscillator.start();
         scheduleAlarmLoop(type);
 
-        sendLog('Alarm boshlandi: ' + type + ', ovoz: ' + volume, 'info');
-
-    } catch (e) {
-        sendLog('Alarm boshlashda xatolik: ' + e.message, 'error');
-    }
+    } catch (e) {}
 }
 
 /**
@@ -889,9 +501,4 @@ function escapeHtml(str) {
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;');
-}
-
-/** Hozirgi vaqt qisqa formati */
-function now() {
-    return new Date().toLocaleTimeString('uz-UZ');
 }
