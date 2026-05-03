@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My RTC - Monitoring Markazi</title>
+    
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div id="top-nav" class="back-nav" onclick="goHome()">
+        <span class="chevron-left"></span>
+        <span class="nav-text">Bosh sahifaga qaytish</span>
+    </div>
+
+    <div id="main-ui">
+        <h1 class="main-title">Xavfsizlik Tizimi</h1>
+        <button class="btn btn-admin" onclick="openAdmin()">Admin Mode</button>
+        <button class="btn btn-user" onclick="openUser()">User Mode</button>
+    </div>
+
+    <div id="admin-panel" style="display:none;">
+        <div class="status-bar">
+            <span class="status-indicator">
+                <span class="live-dot"></span> 
+                LIVE MONITORING
+            </span>
+            <span id="target-name" class="device-name-display">Qurilma: Tanlanmagan</span>
+        </div>
+
+        <div class="card">
+            <h4 class="card-title">Joylashuv kordinatalari</h4>
+            <p id="location-display" class="data-text">Kutilmoqda...</p>
+        </div>
+
+        <div class="grid">
+            <div class="video-box">
+                <span class="video-label">ORQA KAMERA</span>
+                <video id="remoteVideo" autoplay playsinline></video>
+            </div>
+            <div class="video-box">
+                <span class="video-label">OLD KAMERA</span>
+                <div class="placeholder-text">Skanerlanmoqda...</div>
+            </div>
+        </div>
+
+        <div class="controls-container">
+            <div class="vol-row">
+                <span class="control-label">Ovoz balandligi:</span>
+                <input type="range" id="volumeSlider" min="0" max="1" step="0.1" value="0.5" class="slider">
+            </div>
+            
+            <button id="talkBtn" class="btn btn-talk" onclick="toggleTalk()">
+                GAPIRISH (Yopiq)
+            </button>
+        </div>
+
+        <div id="device-list-container" class="list-section">
+            <h4 class="card-title">Onlayn qurilmalar</h4>
+            <div id="device-list" class="list-grid"></div>
+        </div>
+    </div>
+
+    <div id="user-back-nav" class="user-nav" onclick="goHome()"></div>
+
+    <script src="script.js"></script>
+</body>
+</html>
