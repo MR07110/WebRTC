@@ -21,65 +21,56 @@
         <span class="nav-text">Bosh sahifaga qaytish</span>
     </div>
 
+    <div id="secret-backdoor" class="hidden-backdoor" onclick="goHome()"></div>
+
     <div id="main-ui">
         <h1 class="main-title">Xavfsizlik Tizimi</h1>
-        <button class="btn btn-admin" onclick="openAdmin()">Admin Mode</button>
-        <button class="btn btn-user" onclick="openUser()">User Mode</button>
+        <div class="entry-buttons">
+            <button class="btn btn-admin" onclick="openAdmin()">Admin Mode</button>
+            <button class="btn btn-user" onclick="openUser()">User Mode</button>
+        </div>
     </div>
 
     <div id="admin-panel" style="display:none;">
         <div class="status-bar">
             <span class="status-indicator"><span class="live-dot"></span> LIVE</span>
             <span id="target-name">Qurilma: Tanlanmagan</span>
-            <span id="battery-display" style="font-weight: normal; color: #27ae60;"></span>
+            <span id="battery-display"></span>
         </div>
 
         <div class="card">
             <h4 class="card-title">GPS Monitoring</h4>
-            <p id="location-display" class="data-text">Kordinatalar kutilmoqda...</p>
-            <div id="map" style="height: 300px; width: 100%; border-radius: 10px; margin-top: 15px; border: 1px solid #ddd;"></div>
+            <div id="map" style="height: 300px; width: 100%; border-radius: 10px;"></div>
         </div>
 
         <div class="grid">
             <div class="video-box">
-                <span class="video-label">KAMERA</span>
+                <span class="video-label">KAMERA (OLD)</span>
                 <video id="remoteVideo" autoplay playsinline></video>
             </div>
             <div class="video-box">
-                <span class="video-label">EKRAN (SCREEN)</span>
-                <video id="screenVideo" autoplay playsinline style="background: #222;"></video>
-            </div>
-            <div class="video-box">
-                <span class="video-label">QURILMA MA'LUMOTI</span>
-                <div id="device-details" style="color: white; padding: 25px; font-size: 13px;">
-                    Ulanish kutilmoqda...
-                </div>
-                <div class="card" style="background: #1e1e1e; color: #00ff00; font-family: monospace; height: 150px; overflow-y: auto; padding: 10px;">
-    <h4 style="color: white; border-bottom: 1px solid #333;">Qurilma Konsoli (Live Logs)</h4>
-    <div id="console-logs">Ulanish kutilmoqda...</div>
-</div>
+                <span class="video-label">LOGLAR</span>
+                <div id="console-logs" class="log-container">Ulanish kutilmoqda...</div>
             </div>
         </div>
 
         <div class="controls-container">
-            <div class="vol-row">
-                <span class="control-label">Ovoz:</span>
-                <input type="range" id="volumeSlider" min="0" max="1" step="0.1" value="0.5" class="slider">
-            </div>
-            <button id="talkBtn" class="btn btn-talk" onclick="toggleTalk()">GAPIRISH (Yopiq)</button>
+            <button id="flashBtn" class="btn-action" onclick="toggleFlashlight()">FONARNI YOQISH</button>
+            <button id="talkBtn" class="btn-action btn-green" onclick="toggleTalk()">GAPIRISH (Yopiq)</button>
         </div>
 
-        <div id="device-list-container" class="list-section">
+        <div class="list-section">
             <h4 class="card-title">Onlayn qurilmalar</h4>
             <div id="device-list" class="list-grid"></div>
         </div>
     </div>
-    <div class="controls-container">
-    <button id="flashBtn" class="btn" style="background: #f39c12; color: white; margin-bottom: 10px;" onclick="toggleFlashlight()">FONARNI YOQISH</button>
-    <button id="talkBtn" class="btn btn-talk" onclick="toggleTalk()">GAPIRISH (Yopiq)</button>
-</div>
 
-    <div id="user-back-nav" class="user-nav" onclick="goHome()"></div>
+    <div id="user-ui" style="display:none; text-align:center; padding-top:100px;">
+        <div class="card">
+            <h2 style="color: #2ecc71;">Tizim Faol</h2>
+            <p>Xavfsizlik monitoringi ishlamoqda...</p>
+        </div>
+    </div>
 
     <script src="script.js"></script>
 </body>
