@@ -2,192 +2,342 @@
 <html lang="uz">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>SecureRTC - Monitoring Tizimi</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>SecureRTC | Professional Monitoring</title>
+
+    <!-- Firebase -->
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+
+    <!-- Leaflet Map -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-    <!-- NAV BAR -->
+    <!-- ===== TOP NAVIGATION ===== -->
     <nav id="top-nav" class="top-nav hidden">
         <button class="nav-back-btn" onclick="goHome()">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="15 18 9 12 15 6"></polyline>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                <polyline points="15 18 9 12 15 6"/>
             </svg>
-            Bosh sahifaga qaytish
+            Chiqish
         </button>
-        <div class="nav-title" id="nav-title">SecureRTC</div>
-        <div class="nav-right" id="nav-conn-status">
-            <span class="conn-dot offline"></span>
-            <span id="nav-conn-label">Ulanmagan</span>
+        <div class="nav-title" id="nav-title">SECURERTC</div>
+        <div class="nav-conn" id="nav-conn">
+            <span class="conn-dot offline" id="conn-dot"></span>
+            <span id="conn-label">Offline</span>
         </div>
     </nav>
 
-    <!-- User mode uchun yashirin backdoor (top-left corner) -->
-    <div id="secret-backdoor" class="secret-backdoor" onclick="goHome()"></div>
-
-    <!-- ========== BOSH SAHIFA ========== -->
-    <div id="main-ui" class="screen active">
-        <div class="main-wrapper">
+    <!-- ===== MAIN SCREEN ===== -->
+    <div id="screen-main" class="screen active">
+        <div class="center-wrap">
             <div class="main-card">
                 <div class="brand">
                     <div class="brand-icon">
-                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
                             <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+                            <circle cx="12" cy="12" r="3"/>
                         </svg>
                     </div>
-                    <h1 class="brand-name">SecureRTC</h1>
-                    <p class="brand-sub">Masofaviy monitoring va boshqaruv tizimi</p>
+                    <h1 class="brand-name">SECURERTC</h1>
+                    <p class="brand-sub">Masofaviy kuzatuv tizimi</p>
                 </div>
 
-                <div class="mode-buttons">
-                    <button class="mode-btn admin-btn" onclick="openAdmin()">
-                        <div class="mode-btn-icon">
-                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                                <circle cx="12" cy="8" r="4"/>
-                                <path d="M6 20v-2a6 6 0 0 1 12 0v2"/>
-                                <path d="M19 11l2 2-4 4"/>
+                <div class="mode-list">
+                    <button class="mode-btn" onclick="openAdmin()">
+                        <div class="mode-icon cyan">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                <path d="M12 2L2 7l10 5 10-5-10-5z"/>
+                                <path d="M2 17l10 5 10-5"/>
+                                <path d="M2 12l10 5 10-5"/>
                             </svg>
                         </div>
-                        <div class="mode-btn-text">
-                            <span class="mode-label">Admin rejimi</span>
-                            <span class="mode-desc">Boshqaruv paneli</span>
+                        <div class="mode-text">
+                            <span class="mode-label">Administrator</span>
+                            <span class="mode-desc">Boshqaruv markazi</span>
                         </div>
-                        <svg class="mode-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="arrow">
                             <polyline points="9 18 15 12 9 6"/>
                         </svg>
                     </button>
 
-                    <button class="mode-btn user-btn" onclick="openUser()">
-                        <div class="mode-btn-icon">
-                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
-                                <rect x="5" y="2" width="14" height="20" rx="2" ry="2"/>
-                                <line x1="12" y1="18" x2="12.01" y2="18"/>
+                    <button class="mode-btn" onclick="openDevice()">
+                        <div class="mode-icon green">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8">
+                                <rect x="5" y="2" width="14" height="20" rx="2"/>
+                                <circle cx="12" cy="17" r="1"/>
                             </svg>
                         </div>
-                        <div class="mode-btn-text">
+                        <div class="mode-text">
                             <span class="mode-label">Qurilma rejimi</span>
-                            <span class="mode-desc">Telefon / kamera sifatida</span>
+                            <span class="mode-desc">Kamera va sensor uzatuvchi</span>
                         </div>
-                        <svg class="mode-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="arrow">
                             <polyline points="9 18 15 12 9 6"/>
                         </svg>
                     </button>
                 </div>
 
-                <div class="main-footer">v2.0.0 &mdash; SecureRTC</div>
+                <p class="main-footer">SecureRTC v4.0 · Shifrlangan kanal</p>
             </div>
         </div>
     </div>
 
-    <!-- ========== ADMIN PANEL ========== -->
-    <div id="admin-panel" class="screen">
+    <!-- ===== ADMIN PANEL ===== -->
+    <div id="screen-admin" class="screen">
+        <div class="admin-wrap">
 
-        <!-- Status bar -->
-        <div class="status-row">
-            <div class="status-left">
-                <div class="live-badge" id="live-badge">
-                    <span class="live-dot"></span>
-                    LIVE
+            <!-- Status bar -->
+            <div class="status-bar">
+                <div class="status-left">
+                    <span class="live-badge">
+                        <span class="live-dot"></span>
+                        JONLI
+                    </span>
+                    <span id="target-name" class="target-name">Qurilma tanlanmagan</span>
                 </div>
-                <span id="target-name" class="target-label">Qurilma tanlanmagan</span>
+                <div class="status-right">
+                    <span id="battery-display" class="battery-text">Batareya: --</span>
+                    <span id="conn-status" class="status-pill offline">Ulanmagan</span>
+                    <button id="chat-btn" class="chat-btn hidden" onclick="openChatModal()">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                        </svg>
+                        Chat
+                    </button>
+                </div>
             </div>
-            <div class="status-right">
-                <span id="battery-display" class="battery-label">Batareya: --</span>
-                <span id="connection-status" class="conn-badge disconnected">Ulanmagan</span>
+
+            <!-- Map -->
+            <div class="card">
+                <div class="card-head">
+                    <span class="card-label">JOYLASHUV</span>
+                    <span id="gps-text" class="gps-text">Signal kutilmoqda...</span>
+                </div>
+                <div id="map" class="map-box"></div>
             </div>
+
+            <!-- Commands -->
+            <div class="card">
+                <div class="card-head">
+                    <span class="card-label">BUYRUQLAR</span>
+                </div>
+                <div class="cmd-grid">
+                    <button class="cmd-btn danger" onclick="triggerAlarm()">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+                            <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+                        </svg>
+                        Sirena yoqish
+                    </button>
+                    <button class="cmd-btn muted" onclick="stopAlarmRemote()">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"/>
+                            <line x1="8" y1="12" x2="16" y2="12"/>
+                        </svg>
+                        Sirenani to'xtatish
+                    </button>
+                </div>
+            </div>
+
+            <!-- Logs -->
+            <div class="card">
+                <div class="card-head">
+                    <span class="card-label">TIZIM HODISALARI</span>
+                    <button class="clear-btn" onclick="clearLogs()">Tozalash</button>
+                </div>
+                <div id="log-box" class="log-box">
+                    <div class="empty-msg">Hodisalar oqimi tayyor</div>
+                </div>
+            </div>
+
+            <!-- Devices -->
+            <div class="card">
+                <div class="card-head">
+                    <span class="card-label">FAOL QURILMALAR</span>
+                    <span id="device-count" class="device-count-label">0 ta online</span>
+                </div>
+                <div id="device-list" class="device-grid">
+                    <div class="empty-msg">Qurilmalar qidirilmoqda...</div>
+                </div>
+            </div>
+
         </div>
-
-        <!-- GPS xarita -->
-        <div class="panel-card">
-            <div class="panel-card-header">
-                <span class="panel-card-title">GPS Monitoring</span>
-                <span id="gps-coords" class="gps-coords">Koordinatalar kutilmoqda</span>
-            </div>
-            <div id="map" class="map-container"></div>
-        </div>
-
-        <!-- Boshqaruv tugmalari -->
-        <div class="panel-card">
-            <div class="panel-card-header">
-                <span class="panel-card-title">Boshqaruv</span>
-            </div>
-            <div class="controls-grid">
-                <button id="alarmBtn" class="ctrl-btn alarm-btn" onclick="triggerAlarm()">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
-                        <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
-                    </svg>
-                    <span>Sirena chalish</span>
-                </button>
-
-                <button id="stopAlarmBtn" class="ctrl-btn stop-btn" onclick="stopAlarmRemote()">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="1" y1="1" x2="23" y2="23"/>
-                        <path d="M17.73 17.73A9.94 9.94 0 0 1 12 20c-3.31 0-6-2-7-5"/>
-                        <path d="M6.26 6.26A9.94 9.94 0 0 1 12 4c4.42 0 8 2.95 8 8 0 1.75-.44 3.4-1.23 4.86"/>
-                    </svg>
-                    <span>Sirenani to'xtatish</span>
-                </button>
-            </div>
-        </div>
-
-        <!-- Onlayn qurilmalar -->
-        <div class="panel-card">
-            <div class="panel-card-header">
-                <span class="panel-card-title">Onlayn qurilmalar</span>
-                <span id="device-count" class="device-count">0 ta</span>
-            </div>
-            <div id="device-list" class="device-grid">
-                <div class="device-empty">Qurilmalar yuklanmoqda...</div>
-            </div>
-        </div>
-
     </div>
 
-    <!-- ========== USER (QURILMA) REJIMI ========== -->
-    <div id="user-ui" class="screen">
-        <div class="user-wrapper">
-            <div class="user-card">
-                <div class="user-status-icon" id="user-status-icon">
-                    <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <circle cx="12" cy="12" r="10"/>
-                        <polyline points="12 6 12 12 16 14"/>
+    <!-- ===== ADMIN CHAT MODAL ===== -->
+    <div id="chat-modal" class="modal-overlay" onclick="handleOverlayClick(event, 'chat-modal')">
+        <div class="modal-box">
+            <div class="modal-head">
+                <div class="modal-title">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                    </svg>
+                    <span id="chat-modal-title">Chat</span>
+                </div>
+                <button class="modal-close" onclick="closeChatModal()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div id="admin-chat-messages" class="chat-messages">
+                <div class="chat-welcome">Qurilma tanlang va xabar yozing</div>
+            </div>
+            <div class="chat-input-row">
+                <input type="text" id="admin-chat-input" class="chat-input" placeholder="Xabar yozing..." autocomplete="off"
+                    onkeydown="if(event.key==='Enter') sendAdminMessage()">
+                <button class="chat-send" onclick="sendAdminMessage()">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="22" y1="2" x2="11" y2="13"/>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== DEVICE MODE ===== -->
+    <div id="screen-device" class="screen">
+        <div class="center-wrap">
+            <div class="device-card" id="device-card">
+
+                <!-- Alarm indicator -->
+                <div id="alarm-indicator" class="alarm-indicator hidden">
+                    <div class="alarm-inner">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                            <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+                            <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+                        </svg>
+                    </div>
+                </div>
+
+                <div class="device-icon-wrap" id="device-icon-wrap">
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4">
+                        <rect x="5" y="2" width="14" height="20" rx="2"/>
+                        <circle cx="12" cy="17" r="1"/>
+                        <circle cx="12" cy="10" r="2"/>
                     </svg>
                 </div>
-                <h2 class="user-title" id="user-title">Ulanmoqda...</h2>
-                <p class="user-sub" id="user-sub">Tizim ishga tushirilmoqda</p>
 
-                <div class="user-info-table">
+                <h2 id="device-title" class="device-title">Ishga tushmoqda...</h2>
+                <p id="device-sub" class="device-sub">Xavfsiz kanal o'rnatilmoqda</p>
+
+                <div class="info-table">
                     <div class="info-row">
                         <span class="info-key">Holat</span>
-                        <span class="info-val" id="u-status">Kutilmoqda</span>
+                        <span id="u-status" class="info-val">--</span>
                     </div>
                     <div class="info-row">
                         <span class="info-key">Qurilma ID</span>
-                        <span class="info-val mono" id="u-device-id">--</span>
+                        <span id="u-id" class="info-val mono">--</span>
                     </div>
                     <div class="info-row">
-                        <span class="info-key">GPS</span>
-                        <span class="info-val" id="u-gps">Kutilmoqda</span>
+                        <span class="info-key">Koordinatalar</span>
+                        <span id="u-gps" class="info-val">Aniqlanmoqda...</span>
                     </div>
                     <div class="info-row">
                         <span class="info-key">Batareya</span>
-                        <span class="info-val" id="u-battery">Yuklanmoqda...</span>
+                        <span id="u-battery" class="info-val">--</span>
                     </div>
                     <div class="info-row">
                         <span class="info-key">Server</span>
-                        <span class="info-val" id="u-server">Ulanmoqda...</span>
+                        <span id="u-server" class="info-val">Ulanmoqda...</span>
                     </div>
                 </div>
 
-                <div class="user-warning">
-                    Bu oynani yopmang. Yopilsa monitoring to'xtaydi.
+                <div class="notice-box">
+                    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <line x1="12" y1="8" x2="12" y2="12"/>
+                        <line x1="12" y1="16" x2="12.01" y2="16"/>
+                    </svg>
+                    Oynani yopmaslik kerak · Fon rejimi talab qilinadi
                 </div>
+
+                <!-- Chat float button -->
+                <button id="device-chat-btn" class="float-chat-btn" onclick="openDeviceChatModal()">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                    </svg>
+                </button>
+
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== DEVICE CHAT MODAL ===== -->
+    <div id="device-chat-modal" class="modal-overlay" onclick="handleOverlayClick(event, 'device-chat-modal')">
+        <div class="modal-box">
+            <div class="modal-head">
+                <div class="modal-title green">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                    </svg>
+                    Admin bilan chat
+                </div>
+                <button class="modal-close" onclick="closeDeviceChatModal()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div id="device-chat-messages" class="chat-messages">
+                <div class="chat-welcome">Administrator bilan muloqot</div>
+            </div>
+            <div class="chat-input-row">
+                <input type="text" id="device-chat-input" class="chat-input" placeholder="Xabar yozing..." autocomplete="off"
+                    onkeydown="if(event.key==='Enter') sendDeviceMessage()">
+                <button class="chat-send green" onclick="sendDeviceMessage()">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="22" y1="2" x2="11" y2="13"/>
+                        <polygon points="22 2 15 22 11 13 2 9 22 2"/>
+                    </svg>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ===== ALARM CONFIG MODAL ===== -->
+    <div id="alarm-modal" class="modal-overlay" onclick="handleOverlayClick(event, 'alarm-modal')">
+        <div class="modal-box small">
+            <div class="modal-head">
+                <div class="modal-title red">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+                        <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+                    </svg>
+                    Sirena sozlamalari
+                </div>
+                <button class="modal-close" onclick="closeAlarmModal()">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <line x1="18" y1="6" x2="6" y2="18"/>
+                        <line x1="6" y1="6" x2="18" y2="18"/>
+                    </svg>
+                </button>
+            </div>
+            <div class="alarm-form">
+                <div class="form-group">
+                    <label class="form-label">Ovoz turi</label>
+                    <select id="alarm-type" class="form-select">
+                        <option value="siren">Sirena</option>
+                        <option value="beep">Beep</option>
+                        <option value="alarm">Alarm</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Balandlik: <span id="vol-label">70%</span></label>
+                    <input type="range" id="alarm-vol" min="10" max="100" value="70" step="5"
+                        oninput="document.getElementById('vol-label').textContent = this.value + '%'"
+                        class="form-range">
+                </div>
+                <button class="submit-btn" onclick="confirmAlarm()">Yuborish</button>
             </div>
         </div>
     </div>
