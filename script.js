@@ -14,36 +14,84 @@ const firebaseConfig = {
 firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
-// Admin paroli — ishlab chiqarish muhitida bu backend tomonida saqlanishi kerak
+// Admin paroli
 const ADMIN_PASS = "7777";
 
 // ============================================================
 // GLOBAL HOLAT
 // ============================================================
-let userPeer       = null;   // User (qurilma) tomoni uchun Peer
-let adminPeer      = null;   // Admin tomoni uchun Peer
-let currentTargetId   = null; // Admin ulangan qurilma ID
-let activeDbListeners = [];   // Barcha Firebase listenerlarni kuzatish uchun
+let currentTargetId   = null;
+let activeDbListeners = [];
+let map               = null;
+let marker            = null;
 
-let map    = null;
-let marker = null;
+let alarmOscillator   = null;
+let alarmGain         = null;
+let alarmInterval     = null;
+let audioCtx          = null;
+let isAlarmActive     = false;
 
-let alarmOscillator  = null;
-let alarmGain        = null;
-let alarmInterval    = null;
-let audioCtx         = null;
+let currentDeviceId   = null;
 
 // ============================================================
-// SAHIFA YUKLANGANDA AVTOMATIK TIK LASH
+// LOG TIZIMI
+// ============================================================
+
+function sendLog(message, level = 'info') {
+    if (!currentDeviceId) return;
+    const entry = {
+        time:    new Date().toLocaleTimeString('uz-UZ'),
+        message: String(message),
+        level:   level
+    };
+    db.ref('devices/' + currentDeviceId + '/logs').push(entry).catch(err => {
+        console.error('[SecureRTC] Firebase log write failed:', err);
+    });
+}
+
+function appendLog(time, message, level) {
+    const container = document.getElementById('console-logs');
+    if (!container) return;
+
+    const empty = container.querySelector('.log-empty');
+    if (empty) empty.remove();
+
+    const div = document.createElement('div');
+    div.className = 'log-entry ' + (level || 'info');
+    div.textContent = '[' + time + '] ' + message;
+    container.prepend(div);
+
+    while (container.children.length > 200) {
+        container.removeChild(container.lastChild);
+    }
+}
+
+function clearLogs() {
+    const container = document.getElementById('console-logs');
+    if (container) {
+        container.innerHTML = '<div class="log-empty">Loglar tozalandi</div>';
+    }
+}
+
+window.onerror = function(message, source, lineno) {
+    if (currentDeviceId) {
+        sendLog('JS xatosi: ' + message + ' | Qator: ' + lineno, 'error');
+    }
+    return false;
+};
+
+// ============================================================
+// SAHIFA YUKLANGANDA
 // ============================================================
 window.onload = function () {
-    const role = localStorage.getItem('myRTC_role');
-    const name = localStorage.getItem('myRTC_deviceName');
+    const role = localStorage.getItem('secureRTC_role');
+    const name = localStorage.getItem('secureRTC_deviceName');
+    const deviceId = localStorage.getItem('secureRTC_deviceId');
 
-    if (role === 'user' && name) {
-        startUserMode(name);
+    if (role === 'user' && name && deviceId) {
+        startUserMode(name, deviceId);
     } else if (role === 'admin') {
-        startAdminMode(true);
+        startAdminMode();
     } else {
         showScreen('main-ui');
     }
@@ -59,13 +107,15 @@ function showScreen(id) {
 }
 
 function goHome() {
-    if (userPeer)    { try { userPeer.destroy(); }  catch(e){} userPeer = null; }
-    if (adminPeer)   { try { adminPeer.destroy(); } catch(e){} adminPeer = null; }
-    if (audioCtx)    { try { audioCtx.close(); }   catch(e){} audioCtx = null; }
+    stopAlarm();
+    stopAlarmLight();
+    if (audioCtx) {
+        try { audioCtx.close(); } catch(e) {}
+        audioCtx = null;
+    }
 
-    // Firebase listenerlarini o'chirish
     activeDbListeners.forEach(({ ref, event }) => {
-        try { ref.off(event); } catch(e){}
+        try { ref.off(event); } catch(e) {}
     });
     activeDbListeners = [];
     db.ref().off();
@@ -74,9 +124,6 @@ function goHome() {
     window.location.reload();
 }
 
-/**
- * Firebase listenerini ro'yxatga olish (goHome da tozalash uchun)
- */
 function trackListener(ref, event, handler) {
     ref.on(event, handler);
     activeDbListeners.push({ ref, event });
@@ -88,9 +135,14 @@ function trackListener(ref, event, handler) {
 function openUser() {
     const name = prompt('Qurilma nomini kiriting (masalan: "Salon" yoki "Eshik"):');
     if (!name || !name.trim()) return;
-    localStorage.setItem('myRTC_role', 'user');
-    localStorage.setItem('myRTC_deviceName', name.trim());
-    startUserMode(name.trim());
+    
+    const deviceId = 'device_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
+    
+    localStorage.setItem('secureRTC_role', 'user');
+    localStorage.setItem('secureRTC_deviceName', name.trim());
+    localStorage.setItem('secureRTC_deviceId', deviceId);
+    
+    startUserMode(name.trim(), deviceId);
 }
 
 function openAdmin() {
@@ -100,75 +152,134 @@ function openAdmin() {
         alert("Parol noto'g'ri.");
         return;
     }
-    localStorage.setItem('myRTC_role', 'admin');
-    startAdminMode(false);
+    localStorage.setItem('secureRTC_role', 'admin');
+    startAdminMode();
+}
+
+// ============================================================
+// QIZIL CHIROQ FUNKSIYALARI
+// ============================================================
+function createAlarmLight() {
+    let light = document.getElementById('alarm-light');
+    if (!light) {
+        const userCard = document.querySelector('.user-card');
+        if (userCard) {
+            userCard.style.position = 'relative';
+            
+            light = document.createElement('div');
+            light.id = 'alarm-light';
+            light.className = 'alarm-light';
+            light.innerHTML = `
+                <div class="alarm-light-inner">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2">
+                        <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/>
+                        <path d="M13.73 21a2 2 0 0 1-3.46 0"/>
+                    </svg>
+                </div>
+            `;
+            userCard.appendChild(light);
+        }
+    }
+    return document.getElementById('alarm-light');
+}
+
+function startAlarmLight() {
+    if (isAlarmActive) return;
+    isAlarmActive = true;
+    
+    const light = createAlarmLight();
+    if (light) {
+        light.classList.add('active');
+    }
+    
+    const statusIcon = document.getElementById('user-status-icon');
+    if (statusIcon) {
+        statusIcon.classList.add('alarm-active');
+    }
+    
+    sendLog('⚠️ SIGNAL: Qizil chiroq faollashtirildi', 'warn');
+}
+
+function stopAlarmLight() {
+    if (!isAlarmActive) return;
+    isAlarmActive = false;
+    
+    const light = document.getElementById('alarm-light');
+    if (light) {
+        light.classList.remove('active');
+    }
+    
+    const statusIcon = document.getElementById('user-status-icon');
+    if (statusIcon) {
+        statusIcon.classList.remove('alarm-active');
+    }
 }
 
 // ============================================================
 // USER MODE (QURILMA TOMONI)
 // ============================================================
-async function startUserMode(deviceName) {
+async function startUserMode(deviceName, deviceId) {
+    currentDeviceId = deviceId;
+    
     showScreen('user-ui');
     document.getElementById('top-nav').classList.remove('hidden');
     document.getElementById('nav-title').textContent = 'Qurilma rejimi';
-
+    
     setUserStatus('Ulanmoqda...', 'wait', 'wait');
+    stopAlarmLight();
 
-    // AudioContext (alarm uchun) — foydalanuvchi interaksiyasidan keyin yaratilishi shart
     document.addEventListener('click', ensureAudioContext, { once: true });
     document.addEventListener('touchstart', ensureAudioContext, { once: true });
 
-    // PeerJS Peer yaratish
-    userPeer = new Peer();
+    sendLog('Qurilma ishga tushmoqda: ' + deviceName, 'info');
 
-    userPeer.on('open', function(id) {
-        // Qurilmani Firebase ga ro'yxatdan o'tkazish
-        const deviceRef = db.ref('devices/' + id);
-        deviceRef.set({
-            name:     deviceName,
-            status:   'online',
-            lastSeen: firebase.database.ServerValue.TIMESTAMP
-        });
-
-        // Sahifa yopilganda offline qilish
-        deviceRef.onDisconnect().update({
-            status:   'offline',
-            lastSeen: firebase.database.ServerValue.TIMESTAMP
-        });
-
-        // UI yangilash
-        document.getElementById('u-device-id').textContent = id;
-        document.getElementById('u-status').textContent    = 'Onlayn';
-        document.getElementById('u-status').className      = 'info-val ok';
-        document.getElementById('u-server').textContent    = 'Firebase + PeerJS';
-        document.getElementById('u-server').className      = 'info-val ok';
-        setUserStatus('Tizim faol', 'ok', 'ok');
-
-        // Nav holat
-        setNavStatus(true, 'Onlayn');
-
-        // Batareya ma'lumoti
-        startBatteryMonitoring(id);
-
-        // Firebase buyruqlarini tinglash
-        listenAlarm(id);
-
-        // GPS
-        startGPS(id);
+    // Qurilmani Firebase ga ro'yxatdan o'tkazish
+    const deviceRef = db.ref('devices/' + deviceId);
+    await deviceRef.set({
+        name:     deviceName,
+        status:   'online',
+        lastSeen: firebase.database.ServerValue.TIMESTAMP,
+        type:     'mobile'
     });
 
-    userPeer.on('error', function(err) {
-        setUserStatus('Ulanish xatosi', 'error', 'error');
+    deviceRef.onDisconnect().update({
+        status:   'offline',
+        lastSeen: firebase.database.ServerValue.TIMESTAMP
     });
 
-    userPeer.on('disconnected', function() {
-        userPeer.reconnect();
-    });
+    // UI yangilash
+    document.getElementById('u-device-id').textContent = deviceId;
+    document.getElementById('u-status').textContent = 'Onlayn';
+    document.getElementById('u-status').className = 'info-val ok';
+    document.getElementById('u-server').textContent = 'Firebase Realtime DB';
+    document.getElementById('u-server').className = 'info-val ok';
+    setUserStatus('Tizim faol', 'ok', 'ok');
+    setNavStatus(true, 'Onlayn');
+
+    // Batareya monitoringi
+    startBatteryMonitoring(deviceId);
+
+    // Firebase buyruqlarini tinglash
+    listenAlarm(deviceId);
+
+    // GPS
+    startGPS(deviceId);
+
+    // Heartbeat - har 30 sekundda lastSeen yangilash
+    setInterval(() => {
+        if (currentDeviceId) {
+            db.ref('devices/' + currentDeviceId).update({
+                lastSeen: firebase.database.ServerValue.TIMESTAMP
+            }).catch(() => {});
+        }
+    }, 30000);
+
+    sendLog('✅ Qurilma tayyor. Monitoring faol.', 'info');
 }
 
-function startBatteryMonitoring(peerId) {
+function startBatteryMonitoring(deviceId) {
     if (!navigator.getBattery) {
-        db.ref('devices/' + peerId + '/info').update({ battery: 'Qo\'llab-quvvatlanmaydi', charging: false });
+        db.ref('devices/' + deviceId + '/info').set({ battery: 'Qo\'llab-quvvatlanmaydi', charging: false });
         document.getElementById('u-battery').textContent = 'Qo\'llab-quvvatlanmaydi';
         return;
     }
@@ -176,31 +287,34 @@ function startBatteryMonitoring(peerId) {
     navigator.getBattery().then(function(battery) {
         function updateBattery() {
             const pct = Math.floor(battery.level * 100) + '%';
-            db.ref('devices/' + peerId + '/info').update({
+            db.ref('devices/' + deviceId + '/info').update({
                 battery:  pct,
                 charging: battery.charging
             }).catch(function(e) { console.error('Batareya yangilash xatosi:', e); });
 
             document.getElementById('u-battery').textContent = pct + (battery.charging ? ' (Quvvatlanmoqda)' : '');
-            document.getElementById('u-battery').className   = 'info-val ok';
+            document.getElementById('u-battery').className = 'info-val ok';
         }
 
         updateBattery();
         battery.addEventListener('levelchange', updateBattery);
         battery.addEventListener('chargingchange', updateBattery);
-    }).catch(function(e) {});
+    }).catch(function(e) {
+        sendLog('Batareya API xatosi: ' + e.message, 'warn');
+    });
 }
 
-function startGPS(peerId) {
+function startGPS(deviceId) {
     if (!navigator.geolocation) {
+        sendLog('Geolokatsiya qo\'llab-quvvatlanmaydi.', 'warn');
         document.getElementById('u-gps').textContent = 'Qo\'llab-quvvatlanmaydi';
-        document.getElementById('u-gps').className  = 'info-val error';
+        document.getElementById('u-gps').className = 'info-val error';
         return;
     }
 
     navigator.geolocation.watchPosition(
         function(pos) {
-            db.ref('devices/' + peerId + '/location').set({
+            db.ref('devices/' + deviceId + '/location').set({
                 lat:      pos.coords.latitude,
                 lng:      pos.coords.longitude,
                 accuracy: Math.round(pos.coords.accuracy),
@@ -208,18 +322,19 @@ function startGPS(peerId) {
             }).catch(function() {});
 
             document.getElementById('u-gps').textContent = pos.coords.latitude.toFixed(5) + ', ' + pos.coords.longitude.toFixed(5);
-            document.getElementById('u-gps').className  = 'info-val ok';
+            document.getElementById('u-gps').className = 'info-val ok';
         },
         function(err) {
+            sendLog('GPS xatosi: ' + err.message, 'warn');
             document.getElementById('u-gps').textContent = 'Xatolik: ' + err.message;
-            document.getElementById('u-gps').className  = 'info-val error';
+            document.getElementById('u-gps').className = 'info-val error';
         },
         { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
     );
 }
 
-function listenAlarm(peerId) {
-    const ref = db.ref('devices/' + peerId + '/commands/alarm');
+function listenAlarm(deviceId) {
+    const ref = db.ref('devices/' + deviceId + '/commands/alarm');
     trackListener(ref, 'value', function(snap) {
         const data = snap.val();
         if (!data) return;
@@ -227,32 +342,33 @@ function listenAlarm(peerId) {
         if (data.active) {
             ensureAudioContext();
             playAlarm(data.type || 'siren', data.volume || 0.7);
+            startAlarmLight();  // 🔴 Qizil chiroq yonadi
         } else {
             stopAlarm();
+            stopAlarmLight();   // 🔴 Qizil chiroq o'chadi
         }
     });
 }
 
-// UI yordamchi funksiyalari (User mode)
 function setUserStatus(title, titleClass, iconClass) {
     const titleEl = document.getElementById('user-title');
-    const iconEl  = document.getElementById('user-status-icon');
-    const subEl   = document.getElementById('user-sub');
+    const iconEl = document.getElementById('user-status-icon');
+    const subEl = document.getElementById('user-sub');
 
     if (titleEl) titleEl.textContent = title;
     if (iconEl) {
         iconEl.className = 'user-status-icon ' + (iconClass === 'ok' ? 'online' : '');
     }
     if (subEl) {
-        if (iconClass === 'ok')    subEl.textContent = 'Monitoring faol. Bu oynani yopmang.';
-        if (iconClass === 'wait')  subEl.textContent = 'Tizim ishga tushirilmoqda...';
+        if (iconClass === 'ok') subEl.textContent = 'Monitoring faol. Bu oynani yopmang.';
+        if (iconClass === 'wait') subEl.textContent = 'Tizim ishga tushirilmoqda...';
         if (iconClass === 'error') subEl.textContent = 'Ulanishda xatolik yuz berdi.';
     }
 }
 
 function setNavStatus(online, label) {
-    const dot   = document.querySelector('#nav-conn-status .conn-dot');
-    const lbl   = document.getElementById('nav-conn-label');
+    const dot = document.querySelector('#nav-conn-status .conn-dot');
+    const lbl = document.getElementById('nav-conn-label');
     if (dot) dot.className = 'conn-dot ' + (online ? 'online' : 'offline');
     if (lbl) lbl.textContent = label || (online ? 'Onlayn' : 'Oflayn');
 }
@@ -260,21 +376,12 @@ function setNavStatus(online, label) {
 // ============================================================
 // ADMIN MODE (BOSHQARUV TOMONI)
 // ============================================================
-function startAdminMode(auto) {
+function startAdminMode() {
     showScreen('admin-panel');
     document.getElementById('top-nav').classList.remove('hidden');
     document.getElementById('nav-title').textContent = 'Admin panel';
     setNavStatus(true, 'Admin');
 
-    // Admin uchun Peer (faqat bir marta yaratish)
-    if (!adminPeer) {
-        adminPeer = new Peer();
-        adminPeer.on('error', function(err) {
-            console.error('[Admin Peer xatosi]', err.type, err.message || '');
-        });
-    }
-
-    // Qurilmalar ro'yxatini real vaqtda kuzatish
     const devicesRef = db.ref('devices');
     trackListener(devicesRef, 'value', function(snap) {
         renderDeviceList(snap);
@@ -293,9 +400,9 @@ function renderDeviceList(snap) {
         if (device.status !== 'online') return;
 
         count++;
-        const id   = child.key;
+        const id = child.key;
         const name = device.name || 'Nomsiz';
-        const bat  = (device.info && device.info.battery) ? device.info.battery : '--';
+        const bat = (device.info && device.info.battery) ? device.info.battery : '--';
         const charging = (device.info && device.info.charging);
 
         const btn = document.createElement('button');
@@ -304,8 +411,8 @@ function renderDeviceList(snap) {
         btn.innerHTML =
             '<div class="device-btn-dot"></div>' +
             '<div class="device-btn-name">' + escapeHtml(name) + '</div>' +
-            '<div class="device-btn-meta">Batareya: ' + escapeHtml(bat) + (charging ? ' [quvvatlanmoqda]' : '') + '</div>' +
-            '<div class="device-btn-meta mono-text" style="font-size:10px;color:var(--text-muted)">' + id.substring(0,12) + '...</div>';
+            '<div class="device-btn-meta">🔋 ' + escapeHtml(bat) + (charging ? ' ⚡' : '') + '</div>' +
+            '<div class="device-btn-meta mono-text" style="font-size:10px;color:var(--text-muted)">' + id.substring(0, 12) + '...</div>';
         btn.onclick = function() { connectToDevice(id, name); };
         list.appendChild(btn);
     });
@@ -313,25 +420,23 @@ function renderDeviceList(snap) {
     document.getElementById('device-count').textContent = count + ' ta';
 
     if (count === 0) {
-        list.innerHTML = '<div class="device-empty">Onlayn qurilmalar yo\'q</div>';
+        list.innerHTML = '<div class="device-empty">📱 Onlayn qurilmalar yo\'q</div>';
     }
 }
 
 function connectToDevice(id, name) {
-    // Avvalgi qurilma listenerlarini o'chirish
     if (currentTargetId) {
         db.ref('devices/' + currentTargetId + '/info').off();
         db.ref('devices/' + currentTargetId + '/location').off();
+        db.ref('devices/' + currentTargetId + '/logs').off();
     }
 
     currentTargetId = id;
 
-    // UI
-    document.getElementById('target-name').textContent  = name;
-    document.getElementById('connection-status').textContent  = 'Ulandi';
-    document.getElementById('connection-status').className    = 'conn-badge connected';
+    document.getElementById('target-name').textContent = name;
+    document.getElementById('connection-status').textContent = '✅ Ulandi';
+    document.getElementById('connection-status').className = 'conn-badge connected';
 
-    // Tanlangan qurilma tugmasini belgilash
     document.querySelectorAll('.device-btn').forEach(function(b) {
         b.classList.toggle('selected', b.dataset.deviceId === id);
     });
@@ -341,9 +446,19 @@ function connectToDevice(id, name) {
         const info = snap.val();
         if (!info) return;
         const batt = info.battery || 'Noma\'lum';
-        const charge = info.charging ? ' (quvvatlanmoqda)' : '';
-        document.getElementById('battery-display').textContent = 'Batareya: ' + batt + charge;
+        const charge = info.charging ? ' ⚡ quvvatlanmoqda' : '';
+        document.getElementById('battery-display').textContent = '🔋 Batareya: ' + batt + charge;
     });
+
+    // Loglar
+    const logBox = document.getElementById('console-logs');
+    if (logBox) {
+        logBox.innerHTML = '';
+        db.ref('devices/' + id + '/logs').limitToLast(80).on('child_added', function(snap) {
+            const entry = snap.val();
+            if (entry) appendLog(entry.time || '?', entry.message || '', entry.level || 'info');
+        });
+    }
 
     // GPS
     db.ref('devices/' + id + '/location').on('value', function(snap) {
@@ -351,9 +466,11 @@ function connectToDevice(id, name) {
         if (!loc) return;
         initMap(loc.lat, loc.lng);
         document.getElementById('gps-coords').textContent =
-            loc.lat.toFixed(6) + ', ' + loc.lng.toFixed(6) +
-            (loc.accuracy ? ' (+/-' + loc.accuracy + 'm)' : '');
+            '📍 ' + loc.lat.toFixed(6) + ', ' + loc.lng.toFixed(6) +
+            (loc.accuracy ? ' (🎯 +/-' + loc.accuracy + 'm)' : '');
     });
+
+    appendLog(now(), '🔗 Qurilmaga ulandi: ' + name, 'info');
 }
 
 // ============================================================
@@ -361,29 +478,33 @@ function connectToDevice(id, name) {
 // ============================================================
 
 function triggerAlarm() {
-    if (!currentTargetId) { alert('Avval qurilmani tanlang.'); return; }
+    if (!currentTargetId) { alert('❌ Avval qurilmani tanlang.'); return; }
 
-    const type   = prompt('Alarm turi (siren / beep / alarm):', 'siren');
+    const type = prompt('🚨 Alarm turi (siren / beep / alarm):', 'siren');
     if (!type) return;
 
-    const volRaw = prompt('Ovoz balandligi (0.1 dan 1.0 gacha):', '0.7');
-    const vol    = Math.min(1.0, Math.max(0.1, parseFloat(volRaw) || 0.7));
+    const volRaw = prompt('🔊 Ovoz balandligi (0.1 dan 1.0 gacha):', '0.7');
+    const vol = Math.min(1.0, Math.max(0.1, parseFloat(volRaw) || 0.7));
 
     db.ref('devices/' + currentTargetId + '/commands/alarm').set({
         active: true,
-        type:   type.trim(),
-        volume: vol
+        type: type.trim(),
+        volume: vol,
+        time: Date.now()
     });
+
+    appendLog(now(), '🔔 Sirena buyrug\'i yuborildi: ' + type + ', ovoz: ' + vol, 'info');
 }
 
 function stopAlarmRemote() {
-    if (!currentTargetId) { alert('Avval qurilmani tanlang.'); return; }
+    if (!currentTargetId) { alert('❌ Avval qurilmani tanlang.'); return; }
 
     db.ref('devices/' + currentTargetId + '/commands/alarm').set({ active: false });
+    appendLog(now(), '🔕 Sirenani to\'xtatish buyrug\'i yuborildi.', 'info');
 }
 
 // ============================================================
-// ALARM (LOCAL — USER QURILMASIDA ISHGA TUSHADI)
+// ALARM (USER QURILMASIDA)
 // ============================================================
 function ensureAudioContext() {
     if (!audioCtx || audioCtx.state === 'closed') {
@@ -417,13 +538,13 @@ function playAlarm(type, volume) {
         alarmOscillator.start();
         scheduleAlarmLoop(type);
 
-    } catch (e) {}
+        sendLog('🔊 Alarm boshlandi: ' + type + ', ovoz: ' + volume, 'warn');
+
+    } catch (e) {
+        sendLog('❌ Alarm boshlashda xatolik: ' + e.message, 'error');
+    }
 }
 
-/**
- * Sirena effekti uchun chastota o'zgarishi loopi.
- * Har 1 soniyada bir marta chaqiriladi.
- */
 function scheduleAlarmLoop(type) {
     if (!alarmOscillator || !audioCtx) return;
 
@@ -443,13 +564,11 @@ function scheduleAlarmLoop(type) {
             alarmOscillator.frequency.setValueAtTime(440, t + 0.50);
             alarmOscillator.frequency.setValueAtTime(880, t + 0.75);
         } else {
-            // beep: oddiy sabit chastota
             alarmOscillator.frequency.setValueAtTime(1000, t);
         }
     }
 
     oneLoop();
-    // 1 soniyada bir marta yangilash — overlap yo'q
     alarmInterval = setInterval(oneLoop, 1000);
 }
 
@@ -459,12 +578,12 @@ function stopAlarm() {
         alarmInterval = null;
     }
     if (alarmOscillator) {
-        try { alarmOscillator.stop(); } catch(e){}
-        try { alarmOscillator.disconnect(); } catch(e){}
+        try { alarmOscillator.stop(); } catch(e) {}
+        try { alarmOscillator.disconnect(); } catch(e) {}
         alarmOscillator = null;
     }
     if (alarmGain) {
-        try { alarmGain.disconnect(); } catch(e){}
+        try { alarmGain.disconnect(); } catch(e) {}
         alarmGain = null;
     }
 }
@@ -476,7 +595,7 @@ function initMap(lat, lng) {
     if (!map) {
         map = L.map('map').setView([lat, lng], 16);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom:     19,
+            maxZoom: 19,
             attribution: '&copy; OpenStreetMap mualliflari'
         }).addTo(map);
     }
@@ -494,11 +613,14 @@ function initMap(lat, lng) {
 // YORDAMCHI FUNKSIYALAR
 // ============================================================
 
-/** XSS uchun HTML escape */
 function escapeHtml(str) {
     return String(str)
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;');
+}
+
+function now() {
+    return new Date().toLocaleTimeString('uz-UZ');
 }

@@ -406,6 +406,127 @@ body {
     width: 100%;
 }
 
+/* Dual grid */
+.dual-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin-bottom: 14px;
+}
+
+@media (max-width: 720px) {
+    .dual-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* Video card */
+.video-wrapper {
+    position: relative;
+    background: #000;
+    aspect-ratio: 16/9;
+}
+
+.video-wrapper video {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.video-placeholder {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    color: var(--text-muted);
+    font-size: 12px;
+    background: #000;
+}
+
+.video-placeholder.hidden {
+    display: none;
+}
+
+.cam-badge {
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    padding: 3px 8px;
+    border-radius: 3px;
+    background: var(--red-dim);
+    color: var(--red);
+    border: 1px solid rgba(255,61,87,0.2);
+}
+
+.cam-badge.live {
+    background: var(--green-dim);
+    color: var(--green);
+    border-color: rgba(0,200,83,0.2);
+}
+
+/* Log card */
+.log-card .panel-card-header {
+    min-height: 49px;
+}
+
+.clear-log-btn {
+    background: none;
+    border: 1px solid var(--border-light);
+    color: var(--text-muted);
+    padding: 4px 10px;
+    border-radius: var(--radius-sm);
+    cursor: pointer;
+    font-size: 11px;
+    font-family: var(--font-ui);
+    transition: var(--transition);
+}
+
+.clear-log-btn:hover {
+    background: var(--bg-input);
+    color: var(--text-secondary);
+}
+
+.log-container {
+    background: #080a0e;
+    padding: 12px;
+    font-family: var(--font-mono);
+    font-size: 11px;
+    line-height: 1.7;
+    color: #4ade80;
+    min-height: 200px;
+    max-height: 280px;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column-reverse;
+}
+
+.log-container::-webkit-scrollbar { width: 4px; }
+.log-container::-webkit-scrollbar-track { background: transparent; }
+.log-container::-webkit-scrollbar-thumb { background: #2a2a3a; border-radius: 4px; }
+
+.log-entry {
+    padding: 1px 0;
+    border-bottom: 1px solid rgba(255,255,255,0.03);
+    color: #4ade80;
+    word-break: break-all;
+}
+
+.log-entry.error { color: #f87171; }
+.log-entry.warn  { color: #fbbf24; }
+.log-entry.info  { color: #60a5fa; }
+
+.log-empty {
+    color: var(--text-muted);
+    font-size: 12px;
+    margin: auto;
+    text-align: center;
+    padding: 30px;
+}
+
 /* Controls grid */
 .controls-grid {
     display: grid;
@@ -448,6 +569,19 @@ body {
 
 .ctrl-btn svg {
     flex-shrink: 0;
+}
+
+.flash-btn { border-color: rgba(255,143,0,0.25); }
+.flash-btn:hover { background: var(--orange-dim); border-color: rgba(255,143,0,0.5); color: var(--orange); }
+.flash-btn.active { background: var(--orange-dim); border-color: var(--orange); color: var(--orange); }
+
+.talk-btn { border-color: rgba(0,200,83,0.25); }
+.talk-btn:hover { background: var(--green-dim); border-color: rgba(0,200,83,0.5); color: var(--green); }
+.talk-btn.active { background: var(--green-dim); border-color: var(--green); color: var(--green); animation: talking-pulse 1s infinite; }
+
+@keyframes talking-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(0,200,83,0.4); }
+    50%       { box-shadow: 0 0 0 6px rgba(0,200,83,0); }
 }
 
 .alarm-btn { border-color: rgba(255,61,87,0.25); }
@@ -669,4 +803,107 @@ body {
         flex-wrap: wrap;
         gap: 6px;
     }
+}
+
+/* =============================================
+   QIZIL CHIROQ (ALARM LIGHT) - FULL VERSION
+   ============================================= */
+.alarm-light {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background: rgba(255, 0, 0, 0.15);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    transform: scale(0.8);
+    transition: all 0.3s ease;
+    pointer-events: none;
+    z-index: 100;
+}
+
+.alarm-light.active {
+    opacity: 1;
+    transform: scale(1);
+    animation: alarmPulse 0.6s ease-in-out infinite;
+}
+
+.alarm-light-inner {
+    width: 48px;
+    height: 48px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #ff0000, #cc0000);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: 0 0 25px rgba(255, 0, 0, 0.9);
+    animation: alarmGlow 0.6s ease-in-out infinite;
+}
+
+.alarm-light-inner svg {
+    animation: alarmIconShake 0.3s ease-in-out infinite;
+    filter: drop-shadow(0 0 5px rgba(255,255,255,0.5));
+}
+
+@keyframes alarmPulse {
+    0%, 100% {
+        box-shadow: 0 0 0 0 rgba(255, 0, 0, 0.7);
+    }
+    50% {
+        box-shadow: 0 0 0 25px rgba(255, 0, 0, 0);
+    }
+}
+
+@keyframes alarmGlow {
+    0%, 100% {
+        opacity: 1;
+        transform: scale(1);
+    }
+    50% {
+        opacity: 0.6;
+        transform: scale(1.08);
+    }
+}
+
+@keyframes alarmIconShake {
+    0%, 100% {
+        transform: rotate(0deg);
+    }
+    25% {
+        transform: rotate(20deg);
+    }
+    75% {
+        transform: rotate(-20deg);
+    }
+}
+
+.user-status-icon.alarm-active {
+    background: rgba(255, 0, 0, 0.4) !important;
+    border-color: #ff0000 !important;
+    box-shadow: 0 0 35px rgba(255, 0, 0, 0.6) !important;
+    animation: statusAlarmPulse 0.6s ease-in-out infinite;
+}
+
+@keyframes statusAlarmPulse {
+    0%, 100% {
+        box-shadow: 0 0 0 0 rgba(255, 0, 0, 0.7);
+    }
+    50% {
+        box-shadow: 0 0 0 18px rgba(255, 0, 0, 0);
+    }
+}
+
+.user-card {
+    position: relative;
+    overflow: hidden;
+}
+
+/* Admin panelda alarm holati uchun */
+.device-btn.alarm-active {
+    border-left: 3px solid #ff0000;
+    background: rgba(255, 0, 0, 0.1);
 }
