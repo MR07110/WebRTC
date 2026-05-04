@@ -14,8 +14,9 @@ const FIREBASE_CONFIG = {
 firebase.initializeApp(FIREBASE_CONFIG);
 const db = firebase.database();
 
-// ADMIN PAROLI
-const ADMIN_PASS = "7777";
+// DEFAULT ADMIN PASSWORD
+const DEFAULT_ADMIN_PASS = "7777";
+let ADMIN_PASS = DEFAULT_ADMIN_PASS;
 
 // ============================================================
 // GLOBAL STATE
@@ -27,6 +28,9 @@ const state = {
     deviceName: null,
     map:        null,
     marker:     null,
+    watchMarker: null,
+    watchPath: [],
+    polyline: null,
     audioCtx:      null,
     oscillator:    null,
     gainNode:      null,
@@ -34,8 +38,42 @@ const state = {
     alarmActive:   false,
     gpsWatchId:    null,
     heartbeatId:   null,
-    dbListeners:   []
+    locationInterval: null,
+    dbListeners:   [],
+    lastAlarmSent: {},
+    watchingDevice: null,
+    savedDevices: new Set()
 };
+
+// ============================================================
+// ADMIN PAROLNI FIREBASE DAN OLISH
+// ============================================================
+function loadAdminPassword() {
+    const adminPassRef = db.ref('admin_config/password');
+    adminPassRef.once('value').then((snap) => {
+        const savedPass = snap.val();
+        if (savedPass) {
+            ADMIN_PASS = savedPass;
+            console.log('Admin paroli Firebase dan yuklandi');
+        } else {
+            adminPassRef.set(DEFAULT_ADMIN_PASS);
+            ADMIN_PASS = DEFAULT_ADMIN_PASS;
+        }
+    }).catch((err) => console.error('Parol yuklash xatosi:', err));
+}
+
+function updateAdminPassword(newPassword) {
+    return db.ref('admin_config/password').set(newPassword).then(() => {
+        ADMIN_PASS = newPassword;
+        return true;
+    }).catch(() => false);
+}
+
+async function verifyAdminPassword(inputPass) {
+    const snap = await db.ref('admin_config/password').once('value');
+    ADMIN_PASS = snap.val() || DEFAULT_ADMIN_PASS;
+    return inputPass === ADMIN_PASS;
+}
 
 // ============================================================
 // FIREBASE LISTENER BOSHQARUVI
@@ -96,6 +134,10 @@ function goHome() {
         clearInterval(state.heartbeatId);
         state.heartbeatId = null;
     }
+    if (state.locationInterval !== null) {
+        clearInterval(state.locationInterval);
+        state.locationInterval = null;
+    }
     removeAllListeners();
     state.targetId = null;
     state.targetName = null;
@@ -103,6 +145,9 @@ function goHome() {
     state.deviceName = null;
     state.map = null;
     state.marker = null;
+    state.watchPath = [];
+    state.polyline = null;
+    state.watchingDevice = null;
     localStorage.clear();
     window.location.reload();
 }
@@ -111,16 +156,20 @@ function goHome() {
 // ILOVA YUKLANGANDA
 // ============================================================
 window.addEventListener('load', function () {
-    const role = localStorage.getItem('srtc_role');
-    const name = localStorage.getItem('srtc_name');
-    const deviceId = localStorage.getItem('srtc_id');
-
-    if (role === 'device' && name && deviceId) {
-        startDeviceMode(name, deviceId);
-    } else if (role === 'admin') {
-        startAdminMode();
+    loadAdminPassword();
+    
+    const savedDeviceId = localStorage.getItem('srtc_id');
+    const savedDeviceName = localStorage.getItem('srtc_name');
+    
+    if (savedDeviceId && savedDeviceName) {
+        startDeviceMode(savedDeviceName, savedDeviceId);
     } else {
-        showScreen('screen-main');
+        const role = localStorage.getItem('srtc_role');
+        if (role === 'admin') {
+            startAdminMode();
+        } else {
+            showScreen('screen-main');
+        }
     }
 
     db.ref('.info/connected').on('value', function (snap) {
@@ -134,6 +183,8 @@ document.addEventListener('keydown', function (e) {
         closeChatModal();
         closeDeviceChatModal();
         closeAlarmModal();
+        closePassModal();
+        closeDeviceDetail();
     }
 });
 
@@ -142,17 +193,105 @@ function handleOverlayClick(e, modalId) {
         if (modalId === 'chat-modal') closeChatModal();
         if (modalId === 'device-chat-modal') closeDeviceChatModal();
         if (modalId === 'alarm-modal') closeAlarmModal();
+        if (modalId === 'pass-modal') closePassModal();
+    }
+}
+
+// ============================================================
+// TABLAR BOSHQARUVI (3 OYNA)
+// ============================================================
+function switchDeviceTab(tabName) {
+    document.querySelectorAll('.tab-btn').forEach(btn => btn.classList.remove('active'));
+    document.querySelectorAll('.device-panel').forEach(panel => panel.classList.remove('active'));
+    
+    if (tabName === 'online') {
+        document.querySelector('.tab-btn:nth-child(1)').classList.add('active');
+        document.getElementById('online-devices-panel').classList.add('active');
+        renderOnlineDevices();
+    } else if (tabName === 'saved') {
+        document.querySelector('.tab-btn:nth-child(2)').classList.add('active');
+        document.getElementById('saved-devices-panel').classList.add('active');
+        renderSavedDevices();
+    } else if (tabName === 'all') {
+        document.querySelector('.tab-btn:nth-child(3)').classList.add('active');
+        document.getElementById('all-devices-panel').classList.add('active');
+        renderAllDevicesList();
+    }
+}
+
+// ============================================================
+// QURILMA MA'LUMOTLARINI KO'RSATISH
+// ============================================================
+function showDeviceDetail(deviceId, deviceName, deviceStatus, deviceBattery, lastSeen, lastLocation) {
+    const detailCard = document.getElementById('device-detail-card');
+    if (detailCard) {
+        document.getElementById('detail-name').textContent = deviceName;
+        document.getElementById('detail-id').textContent = deviceId;
+        document.getElementById('detail-status').innerHTML = deviceStatus === 'online' ? 
+            '<span style="color: var(--green)"> Online</span>' : 
+            '<span style="color: var(--text3)"> Offline</span>';
+        document.getElementById('detail-battery').textContent = deviceBattery || '--';
+        document.getElementById('detail-lastseen').textContent = lastSeen || '--';
+        document.getElementById('detail-location').textContent = lastLocation || '--';
+        detailCard.style.display = 'block';
+    }
+}
+
+function closeDeviceDetail() {
+    const detailCard = document.getElementById('device-detail-card');
+    if (detailCard) {
+        detailCard.style.display = 'none';
+    }
+}
+
+// ============================================================
+// ADMIN PAROL O'ZGARTIRISH
+// ============================================================
+function openPassModal() {
+    toggleModal('pass-modal', true);
+    document.getElementById('new-pass-input').value = '';
+    document.getElementById('confirm-pass-input').value = '';
+}
+
+function closePassModal() {
+    toggleModal('pass-modal', false);
+}
+
+async function changeAdminPassword() {
+    const newPass = document.getElementById('new-pass-input').value;
+    const confirmPass = document.getElementById('confirm-pass-input').value;
+    
+    if (!newPass || newPass.length < 4) {
+        alert('Parol kamida 4 belgidan iborat bolishi kerak!');
+        return;
+    }
+    
+    if (newPass !== confirmPass) {
+        alert('Yangi parol va tasdiqlash mos kelmadi!');
+        return;
+    }
+    
+    const success = await updateAdminPassword(newPass);
+    if (success) {
+        alert('Admin paroli muvaffaqiyatli ozgartirildi!');
+        closePassModal();
+        localStorage.removeItem('srtc_role');
+        window.location.reload();
+    } else {
+        alert('Parol ozgartirishda xatolik yuz berdi!');
     }
 }
 
 // ============================================================
 // REJIM TANLASH
 // ============================================================
-function openAdmin() {
-    const pass = prompt('Administrator paroli:');
+async function openAdmin() {
+    const pass = prompt('Administrator parolini kiriting:');
     if (pass === null) return;
-    if (pass !== ADMIN_PASS) {
-        alert('Noto\'g\'ri parol. Kirish rad etildi.');
+    
+    const isValid = await verifyAdminPassword(pass);
+    if (!isValid) {
+        alert('Notogri parol. Kirish rad etildi.');
         return;
     }
     localStorage.setItem('srtc_role', 'admin');
@@ -160,10 +299,21 @@ function openAdmin() {
 }
 
 function openDevice() {
-    const name = prompt('Qurilma nomi (masalan: "Ofis", "Darvoza"):');
+    const savedId = localStorage.getItem('srtc_id');
+    const savedName = localStorage.getItem('srtc_name');
+    
+    if (savedId && savedName) {
+        const confirm = confirm(`Avval royhatdan otgansiz: "${savedName}". Shu qurilma sifatida davom etasizmi?`);
+        if (confirm) {
+            startDeviceMode(savedName, savedId);
+            return;
+        }
+    }
+    
+    const name = prompt('Qurilma nomini kiriting (masalan: "Ofis", "Darvoza"):');
     if (!name || !name.trim()) return;
 
-    const deviceId = 'dev_' + Date.now() + '_' + Math.random().toString(36).substr(2, 6);
+    const deviceId = 'dev_' + Date.now() + '_' + Math.random().toString(36).substr(2, 8);
 
     localStorage.setItem('srtc_role', 'device');
     localStorage.setItem('srtc_name', name.trim());
@@ -194,7 +344,9 @@ async function startDeviceMode(deviceName, deviceId) {
     await deviceRef.set({
         name: deviceName,
         status: 'online',
-        lastSeen: firebase.database.ServerValue.TIMESTAMP
+        firstSeen: firebase.database.ServerValue.TIMESTAMP,
+        lastSeen: firebase.database.ServerValue.TIMESTAMP,
+        type: 'mobile'
     }).catch(err => console.error('Device register error:', err));
 
     deviceRef.onDisconnect().update({
@@ -226,8 +378,8 @@ async function startDeviceMode(deviceName, deviceId) {
 // ============================================================
 function startBattery(deviceId) {
     if (!navigator.getBattery) {
-        db.ref('devices/' + deviceId + '/info').set({ battery: 'Qo\'llab-quvvatlanmaydi' });
-        setVal('u-battery', 'Qo\'llab-quvvatlanmaydi');
+        db.ref('devices/' + deviceId + '/info').set({ battery: 'Qollab-quvvatlanmaydi' });
+        setVal('u-battery', 'Qollab-quvvatlanmaydi');
         return;
     }
 
@@ -251,37 +403,42 @@ function startBattery(deviceId) {
 }
 
 // ============================================================
-// GPS
+// GPS (har 3 sekundda yangilanadi)
 // ============================================================
 function startGPS(deviceId) {
     if (!navigator.geolocation) {
-        sendDeviceLog('Geolokatsiya qo\'llab-quvvatlanmaydi', 'warn');
-        setVal('u-gps', 'Qo\'llab-quvvatlanmaydi', 'error');
+        sendDeviceLog('Geolokatsiya qollab-quvvatlanmaydi', 'warn');
+        setVal('u-gps', 'Qollab-quvvatlanmaydi', 'error');
         return;
     }
 
-    state.gpsWatchId = navigator.geolocation.watchPosition(
-        function (pos) {
-            const lat = pos.coords.latitude;
-            const lng = pos.coords.longitude;
-            const acc = Math.round(pos.coords.accuracy);
+    state.locationInterval = setInterval(() => {
+        navigator.geolocation.getCurrentPosition(
+            function (pos) {
+                const lat = pos.coords.latitude;
+                const lng = pos.coords.longitude;
+                const acc = Math.round(pos.coords.accuracy);
+                const speed = pos.coords.speed ? (pos.coords.speed * 3.6).toFixed(1) : 0;
 
-            db.ref('devices/' + deviceId + '/location').set({
-                lat, lng, accuracy: acc, time: timeNow()
-            }).catch(() => {});
+                db.ref('devices/' + deviceId + '/location').set({
+                    lat, lng, accuracy: acc, speed,
+                    time: timeNow(),
+                    timestamp: firebase.database.ServerValue.TIMESTAMP
+                }).catch(() => {});
 
-            setVal('u-gps', lat.toFixed(5) + ', ' + lng.toFixed(5), 'ok');
-        },
-        function (err) {
-            sendDeviceLog('GPS xatosi: ' + err.message, 'warn');
-            setVal('u-gps', 'Xato: ' + err.message, 'error');
-        },
-        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
-    );
+                setVal('u-gps', lat.toFixed(5) + ', ' + lng.toFixed(5) + (speed > 0 ? ' (' + speed + ' km/h)' : ''), 'ok');
+            },
+            function (err) {
+                sendDeviceLog('GPS xatosi: ' + err.message, 'warn');
+                setVal('u-gps', 'Xato: ' + err.message, 'error');
+            },
+            { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
+        );
+    }, 3000);
 }
 
 // ============================================================
-// ALARM TINGLOVCHI (qurilma tomoni)
+// ALARM TINGLOVCHI
 // ============================================================
 function listenAlarm(deviceId) {
     const ref = db.ref('devices/' + deviceId + '/commands/alarm');
@@ -401,7 +558,7 @@ function stopAlarmUI() {
 }
 
 // ============================================================
-// QURILMA CHAT (device tomoni) - TUZATILGAN
+// QURILMA CHAT
 // ============================================================
 function initDeviceChat(deviceId) {
     const ref = db.ref('chats/' + deviceId);
@@ -423,7 +580,6 @@ function sendDeviceMessage() {
     const msg = { from: 'device', text, time: timeNow(), ts: Date.now() };
 
     db.ref('chats/' + state.deviceId).push(msg).then(function () {
-        // Tuzatildi: appendMessage() bu yerda EMAS! Faqat listener ishlaydi
         input.value = '';
         sendDeviceLog('Xabar yuborildi: ' + text.substring(0, 30), 'info');
     }).catch(function (err) {
@@ -440,46 +596,215 @@ function closeDeviceChatModal() { toggleModal('device-chat-modal', false); }
 function startAdminMode() {
     showScreen('screen-admin');
     setNavVisible(true, 'ADMIN PANEL');
+    closeDeviceDetail();
 
     const ref = db.ref('devices');
     addListener(ref, 'value', function (snap) {
-        renderDevices(snap);
+        renderOnlineDevices();
+        renderSavedDevices();
+        renderAllDevicesList();
     });
 }
 
-function renderDevices(snap) {
-    const list = document.getElementById('device-list');
+// 1. ONLINE QURILMALAR
+function renderOnlineDevices() {
+    const list = document.getElementById('online-device-list');
     if (!list) return;
 
     list.innerHTML = '';
-    let count = 0;
+    let onlineCount = 0;
+    const devicesArray = [];
 
-    snap.forEach(function (child) {
-        const dev = child.val();
-        if (dev.status !== 'online') return;
+    db.ref('devices').once('value').then((snap) => {
+        snap.forEach(function (child) {
+            const dev = child.val();
+            if (dev.status === 'online') {
+                onlineCount++;
+                devicesArray.push({
+                    id: child.key,
+                    name: dev.name || 'Nomalum',
+                    battery: (dev.info && dev.info.battery) ? dev.info.battery : '--',
+                    charging: (dev.info && dev.info.charging) ? ' [Zaryad]' : '',
+                    status: dev.status,
+                    lastSeen: dev.lastSeen,
+                    location: dev.location
+                });
+            }
+        });
 
-        count++;
-        const id = child.key;
-        const name = dev.name || 'Noma\'lum';
-        const battery = (dev.info && dev.info.battery) ? dev.info.battery : '--';
-        const charging = (dev.info && dev.info.charging) ? ' [Zaryad]' : '';
+        devicesArray.sort((a, b) => a.name.localeCompare(b.name));
 
-        const btn = document.createElement('button');
-        btn.className = 'device-item' + (id === state.targetId ? ' selected' : '');
-        btn.dataset.id = id;
-        btn.innerHTML =
-            '<div class="device-dot"></div>' +
-            '<div class="device-name">' + escHtml(name) + '</div>' +
-            '<div class="device-meta">Batareya: ' + escHtml(battery) + charging + '</div>' +
-            '<div class="device-meta">' + id.substring(0, 14) + '...</div>';
-        btn.onclick = function () { connectToDevice(id, name); };
-        list.appendChild(btn);
+        devicesArray.forEach(function (device) {
+            const btn = createDeviceButton(device, device.id === state.targetId);
+            list.appendChild(btn);
+        });
+
+        document.getElementById('online-count').textContent = onlineCount + ' ta online';
+
+        if (onlineCount === 0) {
+            list.innerHTML = '<div class="empty-msg">Online qurilmalar topilmadi</div>';
+        }
     });
+}
 
-    document.getElementById('device-count').textContent = count + ' ta online';
+// 2. SAQLANGAN QURILMALAR (offline yoki saqlangan)
+function renderSavedDevices() {
+    const list = document.getElementById('saved-device-list');
+    if (!list) return;
 
-    if (count === 0) {
-        list.innerHTML = '<div class="empty-msg">Faol qurilmalar topilmadi</div>';
+    list.innerHTML = '';
+    let savedCount = 0;
+    const savedDevices = JSON.parse(localStorage.getItem('saved_devices') || '[]');
+
+    db.ref('devices').once('value').then((snap) => {
+        const allDevices = [];
+        snap.forEach(function (child) {
+            const dev = child.val();
+            allDevices.push({
+                id: child.key,
+                name: dev.name || 'Nomalum',
+                battery: (dev.info && dev.info.battery) ? dev.info.battery : '--',
+                charging: (dev.info && dev.info.charging) ? ' [Zaryad]' : '',
+                status: dev.status,
+                lastSeen: dev.lastSeen,
+                location: dev.location
+            });
+        });
+
+        const savedDevicesData = allDevices.filter(d => savedDevices.includes(d.id) || d.status !== 'online');
+        
+        savedDevicesData.forEach(function (device) {
+            if (device.status !== 'online' || savedDevices.includes(device.id)) {
+                savedCount++;
+                const btn = createDeviceButton(device, device.id === state.targetId);
+                list.appendChild(btn);
+            }
+        });
+
+        document.getElementById('saved-count').textContent = savedCount + ' ta saqlangan';
+
+        if (savedCount === 0) {
+            list.innerHTML = '<div class="empty-msg">Saqlangan qurilmalar yoq</div>';
+        }
+    });
+}
+
+// 3. BARCHA QURILMALAR
+function renderAllDevicesList() {
+    const list = document.getElementById('all-device-list');
+    if (!list) return;
+
+    list.innerHTML = '';
+    let allCount = 0;
+    const devicesArray = [];
+
+    db.ref('devices').once('value').then((snap) => {
+        snap.forEach(function (child) {
+            const dev = child.val();
+            allCount++;
+            devicesArray.push({
+                id: child.key,
+                name: dev.name || 'Nomalum',
+                battery: (dev.info && dev.info.battery) ? dev.info.battery : '--',
+                charging: (dev.info && dev.info.charging) ? ' [Zaryad]' : '',
+                status: dev.status,
+                lastSeen: dev.lastSeen,
+                location: dev.location
+            });
+        });
+
+        devicesArray.sort((a, b) => a.name.localeCompare(b.name));
+
+        devicesArray.forEach(function (device) {
+            const btn = createDeviceButton(device, device.id === state.targetId);
+            list.appendChild(btn);
+        });
+
+        document.getElementById('all-count').textContent = allCount + ' ta jami';
+
+        if (allCount === 0) {
+            list.innerHTML = '<div class="empty-msg">Qurilmalar topilmadi</div>';
+        }
+    });
+}
+
+// Qurilma tugmasini yaratish
+function createDeviceButton(device, isSelected) {
+    const btn = document.createElement('button');
+    btn.className = 'device-item' + (isSelected ? ' selected' : '');
+    btn.dataset.id = device.id;
+    
+    const statusDotColor = device.status === 'online' ? 'var(--green)' : 'var(--text3)';
+    const statusText = device.status === 'online' ? 'Online' : 'Offline';
+    
+    btn.innerHTML =
+        '<div class="device-dot" style="background: ' + statusDotColor + '"></div>' +
+        '<div class="device-name">' + escHtml(device.name) + '</div>' +
+        '<div class="device-meta">Batareya: ' + escHtml(device.battery) + device.charging + '</div>' +
+        '<div class="device-meta">' + statusText + '</div>' +
+        '<div class="device-id-small">ID: ' + device.id.substring(0, 14) + '...</div>';
+    
+    btn.onclick = function () { 
+        selectDevice(device.id, device.name);
+        // Saqlangan qurilmalar royxatiga qoshish
+        addToSavedDevices(device.id);
+    };
+    return btn;
+}
+
+// Saqlangan qurilmalarga qoshish
+function addToSavedDevices(deviceId) {
+    let saved = JSON.parse(localStorage.getItem('saved_devices') || '[]');
+    if (!saved.includes(deviceId)) {
+        saved.push(deviceId);
+        localStorage.setItem('saved_devices', JSON.stringify(saved));
+    }
+}
+
+// Qurilmani tanlash
+async function selectDevice(id, name) {
+    const deviceRef = db.ref('devices/' + id);
+    const snapshot = await deviceRef.once('value');
+    const device = snapshot.val();
+    
+    if (device) {
+        const lastSeen = device.lastSeen ? new Date(device.lastSeen).toLocaleString('uz-UZ') : '--';
+        const battery = (device.info && device.info.battery) ? device.info.battery : '--';
+        const lastLocation = device.location ? 
+            device.location.lat.toFixed(5) + ', ' + device.location.lng.toFixed(5) : '--';
+        
+        showDeviceDetail(id, name, device.status, battery, lastSeen, lastLocation);
+        addToSavedDevices(id);
+    }
+    
+    connectToDevice(id, name);
+    
+    if (device && device.status !== 'online') {
+        appendLog(timeNow(), name + ' qurilmasi offline. Online bolganda xabar beriladi.', 'warn');
+        
+        const statusRef = db.ref('devices/' + id + '/status');
+        const statusListener = statusRef.on('value', function(snap) {
+            const status = snap.val();
+            if (status === 'online') {
+                appendLog(timeNow(), name + ' qurilmasi ONLINE boldi!', 'warn');
+                playNotifSound();
+                
+                db.ref('devices/' + id + '/commands/alarm').set({
+                    active: true,
+                    type: 'beep',
+                    volume: 70,
+                    time: Date.now(),
+                    reason: 'device_online'
+                }).then(() => {
+                    setTimeout(() => {
+                        db.ref('devices/' + id + '/commands/alarm').set({ active: false });
+                    }, 3000);
+                });
+                
+                statusRef.off('value', statusListener);
+            }
+        });
+        state.dbListeners.push({ ref: statusRef, event: 'value' });
     }
 }
 
@@ -494,14 +819,22 @@ function connectToDevice(id, name) {
         const chatRef = db.ref('chats/' + state.targetId);
         chatRef.off();
         state.dbListeners = state.dbListeners.filter(l => l.ref !== chatRef);
+        
+        if (state.polyline && state.map) {
+            state.map.removeLayer(state.polyline);
+            state.polyline = null;
+        }
+        state.watchPath = [];
     }
 
     state.targetId = id;
     state.targetName = name;
+    state.watchPath = [];
+    state.watchingDevice = id;
 
     document.getElementById('target-name').textContent = name;
     const pill = document.getElementById('conn-status');
-    pill.textContent = 'Ulangan';
+    pill.textContent = 'Kuzatilmoqda';
     pill.className = 'status-pill online';
 
     const chatBtn = document.getElementById('chat-btn');
@@ -517,6 +850,9 @@ function connectToDevice(id, name) {
         if (!info) return;
         const chg = info.charging ? ' [Zaryad]' : '';
         document.getElementById('battery-display').textContent = 'Batareya: ' + (info.battery || '--') + chg;
+        
+        const detailBattery = document.getElementById('detail-battery');
+        if (detailBattery) detailBattery.textContent = (info.battery || '--') + chg;
     });
     state.dbListeners.push({ ref: infoRef, event: 'value' });
 
@@ -535,20 +871,94 @@ function connectToDevice(id, name) {
     locRef.on('value', function (snap) {
         const loc = snap.val();
         if (!loc) return;
-        updateMap(loc.lat, loc.lng);
+        
+        updateMapWithPath(loc.lat, loc.lng, loc.speed);
+        
+        const speedText = loc.speed ? ' (' + loc.speed + ' km/h)' : '';
         document.getElementById('gps-text').textContent =
-            loc.lat.toFixed(6) + ', ' + loc.lng.toFixed(6) +
-            (loc.accuracy ? ' ±' + loc.accuracy + 'm' : '');
+            loc.lat.toFixed(6) + ', ' + loc.lng.toFixed(6) + speedText +
+            (loc.accuracy ? ' pm' + loc.accuracy + 'm' : '');
+        
+        const detailLocation = document.getElementById('detail-location');
+        if (detailLocation) {
+            detailLocation.textContent = loc.lat.toFixed(5) + ', ' + loc.lng.toFixed(5);
+        }
     });
     state.dbListeners.push({ ref: locRef, event: 'value' });
 
+    const statusRef = db.ref('devices/' + id + '/status');
+    statusRef.on('value', function (snap) {
+        const status = snap.val();
+        const detailStatus = document.getElementById('detail-status');
+        if (detailStatus) {
+            detailStatus.innerHTML = status === 'online' ? 
+                '<span style="color: var(--green)"> Online</span>' : 
+                '<span style="color: var(--text3)"> Offline</span>';
+        }
+        
+        if (status === 'online') {
+            document.getElementById('conn-status').textContent = 'Online';
+            document.getElementById('conn-status').className = 'status-pill online';
+        } else {
+            document.getElementById('conn-status').textContent = 'Offline';
+            document.getElementById('conn-status').className = 'status-pill offline';
+        }
+    });
+    state.dbListeners.push({ ref: statusRef, event: 'value' });
+
     initAdminChat(id, name);
 
-    appendLog(timeNow(), 'Qurilmaga ulandi: ' + name, 'info');
+    appendLog(timeNow(), 'Qurilma kuzatuv boshlandi: ' + name, 'info');
+}
+
+// Xaritani yangilash
+function updateMapWithPath(lat, lng, speed) {
+    if (!state.map) {
+        state.map = L.map('map').setView([lat, lng], 16);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: 'OpenStreetMap'
+        }).addTo(state.map);
+    }
+
+    state.watchPath.push([lat, lng]);
+    
+    if (state.watchPath.length > 50) {
+        state.watchPath.shift();
+    }
+    
+    if (state.polyline && state.map) {
+        state.map.removeLayer(state.polyline);
+    }
+    
+    state.polyline = L.polyline(state.watchPath, {
+        color: '#0ea5e9',
+        weight: 3,
+        opacity: 0.8,
+        lineJoin: 'round'
+    }).addTo(state.map);
+    
+    const carColor = (speed && speed > 0) ? '#f43f5e' : '#10b981';
+    const carIcon = L.divIcon({
+        html: '<div style="width: 20px; height: 20px; background: ' + carColor + '; border-radius: 50%; border: 2px solid white; box-shadow: 0 0 10px rgba(0,0,0,0.5);"></div>',
+        iconSize: [20, 20],
+        className: 'car-marker'
+    });
+    
+    if (!state.marker) {
+        state.marker = L.marker([lat, lng], { icon: carIcon }).addTo(state.map);
+    } else {
+        state.marker.setLatLng([lat, lng]);
+        state.marker.setIcon(carIcon);
+    }
+    
+    if (speed && speed > 0) {
+        state.map.setView([lat, lng], state.map.getZoom());
+    }
 }
 
 // ============================================================
-// ADMIN CHAT (admin tomoni) - TUZATILGAN
+// ADMIN CHAT
 // ============================================================
 function initAdminChat(deviceId, deviceName) {
     const container = document.getElementById('admin-chat-messages');
@@ -577,7 +987,6 @@ function sendAdminMessage() {
     const msg = { from: 'admin', text, time: timeNow(), ts: Date.now() };
 
     db.ref('chats/' + state.targetId).push(msg).then(function () {
-        // Tuzatildi: appendMessage() bu yerda EMAS! Faqat listener ishlaydi
         input.value = '';
         appendLog(timeNow(), state.targetName + ' ga xabar: ' + text.substring(0, 30), 'info');
     }).catch(function (err) {
@@ -612,7 +1021,8 @@ function confirmAlarm() {
         active: true,
         type: type,
         volume: volume,
-        time: Date.now()
+        time: Date.now(),
+        fromAdmin: true
     }).then(function () {
         appendLog(timeNow(), 'Sirena yuborildi: ' + type + ', ' + volume + '%', 'warn');
         closeAlarmModal();
@@ -624,29 +1034,8 @@ function confirmAlarm() {
 function stopAlarmRemote() {
     if (!state.targetId) { alert('Avval qurilma tanlang.'); return; }
     db.ref('devices/' + state.targetId + '/commands/alarm').set({ active: false }).then(function () {
-        appendLog(timeNow(), 'Sirena to\'xtatish buyrug\'i yuborildi.', 'info');
+        appendLog(timeNow(), 'Sirena toxtatish buyrugi yuborildi.', 'info');
     });
-}
-
-// ============================================================
-// XARITA (LEAFLET)
-// ============================================================
-function updateMap(lat, lng) {
-    if (!state.map) {
-        state.map = L.map('map').setView([lat, lng], 16);
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            maxZoom: 19,
-            attribution: '© OpenStreetMap'
-        }).addTo(state.map);
-    }
-
-    if (!state.marker) {
-        state.marker = L.marker([lat, lng]).addTo(state.map);
-    } else {
-        state.marker.setLatLng([lat, lng]);
-    }
-
-    state.map.setView([lat, lng], state.map.getZoom());
 }
 
 // ============================================================
@@ -657,7 +1046,8 @@ function sendDeviceLog(message, level) {
     db.ref('devices/' + state.deviceId + '/logs').push({
         time: timeNow(),
         message: String(message),
-        level: level || 'info'
+        level: level || 'info',
+        timestamp: firebase.database.ServerValue.TIMESTAMP
     }).catch(() => {});
 }
 
@@ -684,7 +1074,7 @@ function clearLogs() {
 }
 
 // ============================================================
-// CHAT XABARLARI - LISTENER ORQALI QO'SHILADI (FAQAT BIR MARTA)
+// CHAT XABARLARI
 // ============================================================
 function appendMessage(containerId, text, isOwn, time) {
     const container = document.getElementById(containerId);
@@ -720,10 +1110,10 @@ function playNotifSound() {
         osc.connect(gain);
         gain.connect(state.audioCtx.destination);
         osc.frequency.value = 880;
-        gain.gain.value = 0.12;
+        gain.gain.value = 0.15;
         osc.start();
-        gain.gain.exponentialRampToValueAtTime(0.00001, state.audioCtx.currentTime + 0.35);
-        osc.stop(state.audioCtx.currentTime + 0.35);
+        gain.gain.exponentialRampToValueAtTime(0.00001, state.audioCtx.currentTime + 0.4);
+        osc.stop(state.audioCtx.currentTime + 0.4);
     } catch (e) {}
 }
 
